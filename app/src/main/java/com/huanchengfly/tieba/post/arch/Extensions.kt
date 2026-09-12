@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -47,15 +48,18 @@ fun <T> Flow<T>.collectIn(
 }
 
 @Composable
-inline fun <reified T : UiState, A> Flow<T>.collectPartialAsState(
+inline fun <reified T : UiState, A> StateFlow<T>.collectPartialAsState(
     prop1: KProperty1<T, A>,
     initial: A,
 ): State<A> {
+    // 首帧必须用 StateFlow 的当前值做种子：produceState 的 collect 是组合后异步执行的，
+    // 若用 initial（通常是空列表/null）做初始值，导航返回恢复 LazyListState 时会因
+    // 首帧空列表把恢复的滚动位置钳制回 0，导致返回后列表回到顶部。
+    val seedValue = remember(this) { prop1.get(this.value) }
     return produceState(
-        initialValue = initial,
+        initialValue = seedValue,
         key1 = this,
-        key2 = prop1,
-        key3 = initial
+        key2 = prop1
     ) {
         this@collectPartialAsState
             .map {

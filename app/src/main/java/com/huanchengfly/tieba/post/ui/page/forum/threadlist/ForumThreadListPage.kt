@@ -58,6 +58,7 @@ import com.huanchengfly.tieba.post.ui.page.forum.getSortType
 import com.huanchengfly.tieba.post.ui.widgets.compose.BlockTip
 import com.huanchengfly.tieba.post.ui.widgets.compose.BlockableContent
 import com.huanchengfly.tieba.post.ui.widgets.compose.Chip
+import com.huanchengfly.tieba.post.ui.widgets.compose.EmptyPlaceholder
 import com.huanchengfly.tieba.post.ui.widgets.compose.FeedCard
 import com.huanchengfly.tieba.post.ui.widgets.compose.LazyLoad
 import com.huanchengfly.tieba.post.ui.widgets.compose.LoadMoreLayout
@@ -365,68 +366,81 @@ fun ForumThreadListPage(
                 )
             }
 
-            LoadMoreLayout(
-                isLoading = isLoadingMore,
-                onLoadMore = {
-                    viewModel.send(
-                        getLoadMoreIntent(
-                            context,
-                            forumId,
-                            forumName,
-                            currentPage,
-                            threadListIds,
-                            isGood
-                        )
-                    )
-                },
-                loadEnd = !hasMore,
-                lazyListState = lazyListState,
-                isEmpty = threadList.isEmpty(),
-                modifier = Modifier.weight(1f)
-            ) {
-                ThreadList(
-                    state = lazyListState,
-                    items = threadList,
-                    onItemClicked = {
-                        navigator.navigate(
-                            ThreadPageDestination(
-                                it.threadId,
-                                forumId = it.forumId,
-                                threadInfo = it
-                            )
-                        )
-                    },
-                    onItemReplyClicked = {
-                        navigator.navigate(
-                            ThreadPageDestination(
-                                it.threadId,
-                                forumId = it.forumId,
-                                scrollToReply = true
-                            )
-                        )
-                    },
-                    onAgree = {
+            // 数据为空时不组合列表：避免恢复的 LazyListState 位置在空列表首帧被钳制回 0
+            // （典型场景：进程回收后返回本页、ViewModel 正在重新加载数据的窗口期）。
+            // 空态用 EmptyPlaceholder 占位，保留下拉刷新手势（列表为空时 LazyColumn 缺席会导致
+            // 嵌套滚动无法派发，ForumPage 的下拉刷新失效）
+            val isEmpty = threadList.isEmpty()
+            if (!isEmpty) {
+                LoadMoreLayout(
+                    isLoading = isLoadingMore,
+                    onLoadMore = {
                         viewModel.send(
-                            ForumThreadListUiIntent.Agree(
-                                it.threadId,
-                                it.firstPostId,
-                                it.agree?.hasAgree ?: 0
+                            getLoadMoreIntent(
+                                context,
+                                forumId,
+                                forumName,
+                                currentPage,
+                                threadListIds,
+                                isGood
                             )
                         )
                     },
-                    forumRuleTitle = forumRuleTitle,
-                    onOpenForumRule = {
-                        navigator.navigate(ForumRuleDetailPageDestination(forumId))
-                    },
-                    onOriginThreadClicked = {
-                        navigator.navigate(
-                            ThreadPageDestination(
-                                threadId = it.tid.toLong(),
-                                forumId = it.fid,
+                    loadEnd = !hasMore,
+                    lazyListState = lazyListState,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    ThreadList(
+                        state = lazyListState,
+                        items = threadList,
+                        onItemClicked = {
+                            navigator.navigate(
+                                ThreadPageDestination(
+                                    it.threadId,
+                                    forumId = it.forumId,
+                                    threadInfo = it
+                                )
                             )
-                        )
-                    }
-                ) { navigator.navigate(UserProfilePageDestination(it.id)) }
+                        },
+                        onItemReplyClicked = {
+                            navigator.navigate(
+                                ThreadPageDestination(
+                                    it.threadId,
+                                    forumId = it.forumId,
+                                    scrollToReply = true
+                                )
+                            )
+                        },
+                        onAgree = {
+                            viewModel.send(
+                                ForumThreadListUiIntent.Agree(
+                                    it.threadId,
+                                    it.firstPostId,
+                                    it.agree?.hasAgree ?: 0
+                                )
+                            )
+                        },
+                        forumRuleTitle = forumRuleTitle,
+                        onOpenForumRule = {
+                            navigator.navigate(ForumRuleDetailPageDestination(forumId))
+                        },
+                        onOriginThreadClicked = {
+                            navigator.navigate(
+                                ThreadPageDestination(
+                                    threadId = it.tid.toLong(),
+                                    forumId = it.fid,
+                                )
+                            )
+                        }
+                    ) { navigator.navigate(UserProfilePageDestination(it.id)) }
+                }
+            } else if (!isRefreshing) {
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    EmptyPlaceholder()
+                }
             }
         }
 

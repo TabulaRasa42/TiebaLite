@@ -53,6 +53,14 @@ ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
+// Keep Kotlin JVM target aligned with Java regardless of the JDK running Gradle
+// (e.g. building locally with a Java 21 IDE JBR while CI uses Java 17).
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 android {
     buildToolsVersion = "36.0.0"
     compileSdk = 36

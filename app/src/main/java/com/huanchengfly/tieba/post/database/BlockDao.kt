@@ -20,4 +20,7 @@ interface BlockDao {
 
     @Query("DELETE FROM block WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM block WHERE category = :category")
+    suspend fun deleteByCategory(category: Int)
 }

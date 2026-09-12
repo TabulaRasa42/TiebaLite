@@ -20,8 +20,10 @@ class BlockListViewModel :
             is BlockListPartialChange.Load.Failure -> CommonUiEvent.Toast(partialChange.error.getErrorMessage())
             is BlockListPartialChange.Add.Failure -> CommonUiEvent.Toast(partialChange.error.getErrorMessage())
             is BlockListPartialChange.Delete.Failure -> CommonUiEvent.Toast(partialChange.error.getErrorMessage())
+            is BlockListPartialChange.Clear.Failure -> CommonUiEvent.Toast(partialChange.error.getErrorMessage())
             is BlockListPartialChange.Add.Success -> BlockListUiEvent.Success.Add
             is BlockListPartialChange.Delete.Success -> BlockListUiEvent.Success.Delete
+            is BlockListPartialChange.Clear.Success -> BlockListUiEvent.Success.Clear
             else -> null
         }
 
@@ -36,6 +38,8 @@ class BlockListViewModel :
                     .flatMapConcat { it.producePartialChange() },
                 intentFlow.filterIsInstance<BlockListUiIntent.Delete>()
                     .flatMapConcat { it.producePartialChange() },
+                intentFlow.filterIsInstance<BlockListUiIntent.Clear>()
+                    .flatMapConcat { it.producePartialChange() },
             )
 
         private fun produceLoadPartialChange(): Flow<BlockListPartialChange.Load> =
@@ -45,7 +49,9 @@ class BlockListViewModel :
                     BlockManager.whiteList
                 )
             )
-                .onStart { BlockListPartialChange.Load.Start }
+                // emit 而非裸表达式：漏写 emit 会让 Start 从未发出（此前被默认
+                // isLoading=true 掩盖，状态机语义不完整）
+                .onStart { emit(BlockListPartialChange.Load.Start) }
                 .catch { emit(BlockListPartialChange.Load.Failure(it)) }
 
         private fun BlockListUiIntent.Add.producePartialChange(): Flow<BlockListPartialChange.Add> =
@@ -65,6 +71,12 @@ class BlockListViewModel :
                 BlockManager.removeBlock(id)
                 emit(BlockListPartialChange.Delete.Success(id))
             }.catch { emit(BlockListPartialChange.Delete.Failure(it)) }
+
+        private fun BlockListUiIntent.Clear.producePartialChange(): Flow<BlockListPartialChange.Clear> =
+            flow<BlockListPartialChange.Clear> {
+                BlockManager.removeBlocksByCategory(category)
+                emit(BlockListPartialChange.Clear.Success(category))
+            }.catch { emit(BlockListPartialChange.Clear.Failure(it)) }
     }
 }
 
@@ -79,6 +91,11 @@ sealed interface BlockListUiIntent : UiIntent {
 
     data class Delete(
         val id: Long,
+    ) : BlockListUiIntent
+
+    // 一键清空某类名单（CATEGORY_BLACK_LIST / CATEGORY_WHITE_LIST）
+    data class Clear(
+        val category: Int,
     ) : BlockListUiIntent
 }
 
@@ -146,6 +163,22 @@ sealed interface BlockListPartialChange : PartialChange<BlockListUiState> {
 
         data class Failure(val error: Throwable) : Delete()
     }
+
+    sealed class Clear : BlockListPartialChange {
+        override fun reduce(oldState: BlockListUiState): BlockListUiState =
+            when (this) {
+                is Success -> when (category) {
+                    Block.CATEGORY_BLACK_LIST -> oldState.copy(blackList = emptyList())
+                    else -> oldState.copy(whiteList = emptyList())
+                }
+
+                is Failure -> oldState
+            }
+
+        data class Success(val category: Int) : Clear()
+
+        data class Failure(val error: Throwable) : Clear()
+    }
 }
 
 data class BlockListUiState(
@@ -158,5 +191,6 @@ sealed interface BlockListUiEvent : UiEvent {
     sealed interface Success : BlockListUiEvent {
         object Add : Success
         object Delete : Success
+        object Clear : Success
     }
 }

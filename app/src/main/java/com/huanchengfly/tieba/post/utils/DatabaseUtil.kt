@@ -39,13 +39,24 @@ object DatabaseUtil {
     // ── History ─────────────────────────────────────────────────
     suspend fun getAllHistory(): List<History> = appDatabase.historyDao().getAll()
 
+    suspend fun getAllHistoryNoLimit(): List<History> = appDatabase.historyDao().getAllNoLimit()
+
     suspend fun getHistoryByType(type: Int, pageSize: Int = 100, offset: Int = 0): List<History> =
         appDatabase.historyDao().getByType(type, pageSize, offset)
+
+    suspend fun getHistoryByTypeAndDay(type: Int, dayStart: Long, dayEnd: Long): List<History> =
+        appDatabase.historyDao().getByTypeAndDay(type, dayStart, dayEnd)
+
+    suspend fun getEarliestHistoryTimestamp(): Long? =
+        appDatabase.historyDao().getEarliestTimestamp()
 
     fun getHistoryFlowByType(type: Int, pageSize: Int = 100, offset: Int = 0): Flow<List<History>> =
         appDatabase.historyDao().getFlowByType(type, pageSize, offset)
 
     suspend fun upsertHistory(history: History) = appDatabase.historyDao().upsert(history)
+
+    // 直接插入记录，保留原始 timestamp/count，不触发 upsert 的去重更新逻辑（导入用）
+    suspend fun upsertHistoryRaw(history: History) = appDatabase.historyDao().insert(history)
 
     suspend fun deleteHistoryById(id: Long) = appDatabase.historyDao().deleteById(id)
 
@@ -59,6 +70,9 @@ object DatabaseUtil {
     suspend fun insertBlock(block: Block): Long = appDatabase.blockDao().insert(block)
 
     suspend fun deleteBlockById(id: Long) = appDatabase.blockDao().deleteById(id)
+
+    suspend fun deleteBlocksByCategory(category: Int) =
+        appDatabase.blockDao().deleteByCategory(category)
 
     // ── Draft ───────────────────────────────────────────────────
     suspend fun getDraft(hash: String): Draft? = appDatabase.draftDao().getByHash(hash)

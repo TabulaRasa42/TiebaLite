@@ -14,11 +14,23 @@ interface HistoryDao {
     @Query("SELECT * FROM history ORDER BY timestamp DESC, count DESC LIMIT 100")
     suspend fun getAll(): List<History>
 
+    @Query("SELECT * FROM history ORDER BY timestamp DESC, count DESC")
+    suspend fun getAllNoLimit(): List<History>
+
     @Query("SELECT * FROM history WHERE type = :type ORDER BY timestamp DESC, count DESC LIMIT :pageSize OFFSET :offset")
     suspend fun getByType(type: Int, pageSize: Int = 100, offset: Int = 0): List<History>
 
     @Query("SELECT * FROM history WHERE type = :type ORDER BY timestamp DESC, count DESC LIMIT :pageSize OFFSET :offset")
     fun getFlowByType(type: Int, pageSize: Int = 100, offset: Int = 0): Flow<List<History>>
+
+    @Query(
+        "SELECT * FROM history WHERE type = :type AND timestamp BETWEEN :dayStart AND :dayEnd " +
+                "ORDER BY timestamp DESC, count DESC"
+    )
+    suspend fun getByTypeAndDay(type: Int, dayStart: Long, dayEnd: Long): List<History>
+
+    @Query("SELECT MIN(timestamp) FROM history")
+    suspend fun getEarliestTimestamp(): Long?
 
     @Query("SELECT * FROM history WHERE data = :data LIMIT 1")
     suspend fun getByData(data: String): History?

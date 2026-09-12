@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Checkbox
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Tab
 import androidx.compose.material.Text
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -61,6 +63,7 @@ import com.huanchengfly.tieba.post.models.database.Block
 import com.huanchengfly.tieba.post.ui.common.theme.compose.ExtendedTheme
 import com.huanchengfly.tieba.post.ui.page.main.BottomNavigationDivider
 import com.huanchengfly.tieba.post.ui.widgets.compose.BackNavigationIcon
+import com.huanchengfly.tieba.post.ui.widgets.compose.ConfirmDialog
 import com.huanchengfly.tieba.post.ui.widgets.compose.LocalSnackbarHostState
 import com.huanchengfly.tieba.post.ui.widgets.compose.LongClickMenu
 import com.huanchengfly.tieba.post.ui.widgets.compose.MyLazyColumn
@@ -88,15 +91,24 @@ fun BlockListPage(
     var addBlockCategory by remember { mutableStateOf(Block.CATEGORY_BLACK_LIST) }
     val dialogState = rememberDialogState()
     var isRegex by remember { mutableStateOf(false) } // 记录是否为正则
+    // 一键清空当前 tab 名单的确认弹窗
+    val clearDialogState = rememberDialogState()
+    var clearCategory by remember { mutableStateOf(Block.CATEGORY_BLACK_LIST) }
     PromptDialog(
         onConfirm = {
-            viewModel.send(
-                BlockListUiIntent.Add(
-                    category = addBlockCategory,
-                    keywords =  if (isRegex) listOf(it) else it.split(" "), // 避免正则中的空格导致正则失效
-                    isRegex = isRegex // 传递正则状态
+            // 过滤空串：split 出的空关键词 contains("") 恒真会屏蔽全部内容；
+            // 正则模式的空串同理匹配一切。全空则无操作
+            val keywords = if (isRegex) listOf(it)
+            else it.split(" ")
+            if (keywords.any { keyword -> keyword.isNotBlank() }) {
+                viewModel.send(
+                    BlockListUiIntent.Add(
+                        category = addBlockCategory,
+                        keywords = keywords.filter { keyword -> keyword.isNotBlank() },
+                        isRegex = isRegex // 传递正则状态
+                    )
                 )
-            )
+            }
             isRegex = false // 重置
         },
         dialogState = dialogState,
@@ -135,6 +147,32 @@ fun BlockListPage(
         prop1 = BlockListUiState::isLoading,
         initial = false
     )
+    ConfirmDialog(
+        dialogState = clearDialogState,
+        onConfirm = {
+            viewModel.send(BlockListUiIntent.Clear(clearCategory))
+        },
+        title = {
+            Text(
+                text = stringResource(
+                    id = if (clearCategory == Block.CATEGORY_BLACK_LIST) R.string.title_clear_black_list
+                    else R.string.title_clear_white_list
+                )
+            )
+        }
+    ) {
+        val count = if (clearCategory == Block.CATEGORY_BLACK_LIST) blackList.size else whiteList.size
+        Text(
+            text = stringResource(
+                id = R.string.tip_clear_block_list,
+                stringResource(
+                    id = if (clearCategory == Block.CATEGORY_BLACK_LIST) R.string.title_black_list
+                    else R.string.title_white_list
+                ),
+                "$count 条"
+            )
+        )
+    }
     MyScaffold(
         backgroundColor = Color.Transparent,
         topBar = {
@@ -147,6 +185,28 @@ fun BlockListPage(
                 },
                 navigationIcon = {
                     BackNavigationIcon(onBackPressed = { navigator.navigateUp() })
+                },
+                actions = {
+                    // 一键清空当前 tab 名单：0 条时禁用（alpha 区分）
+                    val currentCount =
+                        if (pagerState.currentPage == 0) blackList.size else whiteList.size
+                    val clearEnabled = currentCount > 0 && !isLoading
+                    IconButton(
+                        onClick = {
+                            clearCategory =
+                                if (pagerState.currentPage == 0) Block.CATEGORY_BLACK_LIST
+                                else Block.CATEGORY_WHITE_LIST
+                            clearDialogState.show()
+                        },
+                        enabled = clearEnabled
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Delete,
+                            contentDescription = stringResource(id = R.string.title_clear_block_list),
+                            tint = if (clearEnabled) ExtendedTheme.colors.onTopBar
+                            else ExtendedTheme.colors.onTopBar.copy(alpha = 0.38f)
+                        )
+                    }
                 },
                 content = {
                     TabRow(
@@ -242,6 +302,7 @@ fun BlockListPage(
                 when (it) {
                     is BlockListUiEvent.Success.Add -> context.getString(R.string.toast_add_success)
                     is BlockListUiEvent.Success.Delete -> context.getString(R.string.toast_delete_success)
+                    is BlockListUiEvent.Success.Clear -> context.getString(R.string.toast_clear_success)
                 }
             )
         }
@@ -359,7 +420,7 @@ private fun BlockItem(
         ) {
             if (item.type == Block.TYPE_USER) {
                 Text(
-                    text = "${item.username}",
+                    text = item.username.orEmpty(),
                     style = MaterialTheme.typography.subtitle1
                 )
                 Text(

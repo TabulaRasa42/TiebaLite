@@ -18,8 +18,15 @@ object HistoryUtil {
 
     suspend fun getAll(): List<History> = DatabaseUtil.getAllHistory()
 
+    suspend fun getAllNoLimit(): List<History> = DatabaseUtil.getAllHistoryNoLimit()
+
     suspend fun get(type: Int, page: Int): List<History> =
         DatabaseUtil.getHistoryByType(type, PAGE_SIZE, page * PAGE_SIZE)
+
+    suspend fun getByDay(type: Int, dayStart: Long, dayEnd: Long): List<History> =
+        DatabaseUtil.getHistoryByTypeAndDay(type, dayStart, dayEnd)
+
+    suspend fun getEarliestTimestamp(): Long? = DatabaseUtil.getEarliestHistoryTimestamp()
 
     fun getFlow(type: Int, page: Int): Flow<List<History>> =
         DatabaseUtil.getHistoryFlowByType(type, PAGE_SIZE, page * PAGE_SIZE)

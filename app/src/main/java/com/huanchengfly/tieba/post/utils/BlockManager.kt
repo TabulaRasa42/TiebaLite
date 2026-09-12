@@ -8,13 +8,13 @@ import com.huanchengfly.tieba.post.api.models.protos.abstractText
 import com.huanchengfly.tieba.post.api.models.protos.plainText
 import com.huanchengfly.tieba.post.models.database.Block
 import com.huanchengfly.tieba.post.models.database.Block.Companion.getKeywords
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.regex.Pattern
 
 object BlockManager {
-    private val blockList: MutableList<Block> = mutableListOf()
+    // CopyOnWriteArrayList：启动时 init 写入与 IO 线程 shouldBlock 遍历并发，
+    // 普通 ArrayList 有 ConcurrentModificationException 风险
+    private val blockList: MutableList<Block> = CopyOnWriteArrayList()
 
     val blackList: List<Block>
         get() = blockList.filter { it.category == Block.CATEGORY_BLACK_LIST }
@@ -29,21 +29,14 @@ object BlockManager {
         return savedBlock
     }
 
-    fun addBlockAsync(
-        block: Block,
-        callback: ((Boolean) -> Unit)? = null,
-    ) {
-        GlobalScope.launch(Dispatchers.IO) {
-            val id = DatabaseUtil.insertBlock(block)
-            val savedBlock = block.copy(id = id)
-            blockList.add(savedBlock)
-            callback?.invoke(true)
-        }
-    }
-
     suspend fun removeBlock(id: Long) {
         DatabaseUtil.deleteBlockById(id)
         blockList.removeAll { it.id == id }
+    }
+
+    suspend fun removeBlocksByCategory(category: Int) {
+        DatabaseUtil.deleteBlocksByCategory(category)
+        blockList.removeAll { it.category == category }
     }
 
     suspend fun init() {

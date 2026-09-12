@@ -68,6 +68,41 @@ object DateTimeUtils {
         set(Calendar.SECOND, 0)
     }
 
+    /**
+     * 某天的起始时间戳（当日 00:00:00 本地时区）
+     */
+    @JvmStatic
+    fun dayStart(year: Int, month: Int, dayOfMonth: Int): Long {
+        val calendar = Calendar.getInstance()
+        calendar.clear()
+        calendar.set(year, month, dayOfMonth, 0, 0, 0)
+        return calendar.timeInMillis
+    }
+
+    /**
+     * 某天的结束时间戳（当日 23:59:59.999 本地时区）
+     */
+    @JvmStatic
+    fun dayEnd(year: Int, month: Int, dayOfMonth: Int): Long {
+        val calendar = Calendar.getInstance()
+        calendar.clear()
+        calendar.set(year, month, dayOfMonth, 23, 59, 59)
+        return calendar.timeInMillis + 999
+    }
+
+    /**
+     * 时间戳对应日历的年/月(0-based)/日
+     */
+    @JvmStatic
+    fun toCalendarFields(timestamp: Long): Triple<Int, Int, Int> {
+        val calendar = Calendar.getInstance().apply { timeInMillis = timestamp }
+        return Triple(
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        )
+    }
+
     @JvmStatic
     fun isToday(timestamp: Long): Boolean {
         val date = DateFormat.getDateInstance().format(timestamp)

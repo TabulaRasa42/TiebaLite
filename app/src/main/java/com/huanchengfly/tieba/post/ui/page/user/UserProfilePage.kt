@@ -132,6 +132,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
@@ -405,6 +406,7 @@ private fun UserProfileToolbar(
     showTitle: Boolean,
     onSetUserBlack: () -> Unit,
     onBack: () -> Unit,
+    coroutineScope: CoroutineScope,
 ) {
     val context = LocalContext.current
     val account = LocalAccount.current
@@ -428,15 +430,24 @@ private fun UserProfileToolbar(
                     menuContent = {
                         DropdownMenuItem(
                             onClick = {
-                                BlockManager.addBlockAsync(
-                                    Block(
-                                        category = Block.CATEGORY_BLACK_LIST,
-                                        type = Block.TYPE_USER,
-                                        username = it.get { name }.ifEmpty { it.get { nameShow } },
-                                        uid = it.get { id }.toString()
-                                    )
-                                ) {
-                                    if (it) context.toastShort(R.string.toast_add_success)
+                                // 挂到页面级协程作用域：DB 失败可提示，Toast 在主线程
+                                coroutineScope.launch {
+                                    runCatching {
+                                        BlockManager.addBlock(
+                                            Block(
+                                                category = Block.CATEGORY_BLACK_LIST,
+                                                type = Block.TYPE_USER,
+                                                username = it.get { name }.ifEmpty { it.get { nameShow } },
+                                                uid = it.get { id }.toString()
+                                            )
+                                        )
+                                    }.onSuccess {
+                                        context.toastShort(R.string.toast_add_success)
+                                    }.onFailure {
+                                        context.toastShort(
+                                            context.getString(R.string.toast_add_failed, it.message ?: "")
+                                        )
+                                    }
                                 }
                             }
                         ) {
@@ -444,15 +455,23 @@ private fun UserProfileToolbar(
                         }
                         DropdownMenuItem(
                             onClick = {
-                                BlockManager.addBlockAsync(
-                                    Block(
-                                        category = Block.CATEGORY_WHITE_LIST,
-                                        type = Block.TYPE_USER,
-                                        username = it.get { name }.ifEmpty { it.get { nameShow } },
-                                        uid = it.get { id }.toString()
-                                    )
-                                ) {
-                                    if (it) context.toastShort(R.string.toast_add_success)
+                                coroutineScope.launch {
+                                    runCatching {
+                                        BlockManager.addBlock(
+                                            Block(
+                                                category = Block.CATEGORY_WHITE_LIST,
+                                                type = Block.TYPE_USER,
+                                                username = it.get { name }.ifEmpty { it.get { nameShow } },
+                                                uid = it.get { id }.toString()
+                                            )
+                                        )
+                                    }.onSuccess {
+                                        context.toastShort(R.string.toast_add_success)
+                                    }.onFailure {
+                                        context.toastShort(
+                                            context.getString(R.string.toast_add_failed, it.message ?: "")
+                                        )
+                                    }
                                 }
                             }
                         ) {
@@ -523,6 +542,7 @@ private fun UserProfileContentNormal(
                 showTitle = !isShowHeaderArea,
                 onBack = onBack,
                 onSetUserBlack = onSetUserBlack,
+                coroutineScope = coroutineScope,
             )
         }
     ) { paddingValues ->
@@ -732,7 +752,8 @@ private fun UserProfileContentExpanded(
                 isSelf = isSelf,
                 showTitle = false,
                 onSetUserBlack = onSetUserBlack,
-                onBack = onBack
+                onBack = onBack,
+                coroutineScope = rememberCoroutineScope(),
             )
         }
     ) { paddingValues ->
