@@ -251,7 +251,6 @@ dependencies {
     testImplementation(libs.junit.junit)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.okhttp3.mockwebserver)
     androidTestImplementation(libs.androidx.test.core)
     androidTestImplementation(libs.androidx.test.ext.junit)

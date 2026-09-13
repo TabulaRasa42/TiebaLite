@@ -3,6 +3,7 @@ package com.huanchengfly.tieba.post.utils
 import com.huanchengfly.tieba.post.utils.webdav.OkHttpWebDavClient
 import com.huanchengfly.tieba.post.utils.webdav.WebDavClient
 import com.huanchengfly.tieba.post.utils.webdav.WebDavException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -70,13 +71,13 @@ class WebDavClientTest {
     }
 
     @Test
-    fun `put 路径含空格与中文时被编码`() = runTest {
+    fun `put 路径含空格与中文时按 RFC 3986 编码(空格为 %20)`() = runTest {
         enqueue(200)
 
         client.put("目录/my backup.json", "x".toByteArray())
 
         val request = server.takeRequest()
-        assertEquals("/dav/%E7%9B%AE%E5%BD%95/my+backup.json", request.target)
+        assertEquals("/dav/%E7%9B%AE%E5%BD%95/my%20backup.json", request.target)
     }
 
     @Test
@@ -149,7 +150,7 @@ class WebDavClientTest {
     fun `exists 以 Depth 0 的 PROPFIND 探测目录存在性`() = runTest {
         enqueue(207)
 
-        val exists = client.exists("tblite")
+        val exists = client.exists("tblite/")
 
         assertTrue(exists)
         val request = server.takeRequest()
@@ -173,6 +174,61 @@ class WebDavClientTest {
 
         assertTrue(e is WebDavException.Http)
         assertEquals(500, (e as WebDavException.Http).code)
+    }
+
+    @Test
+    fun `exists 对文件路径不带尾斜杠 尊重调用方路径形态`() = runTest {
+        enqueue(207)
+
+        val exists = client.exists("tblite/backup.json")
+
+        assertTrue(exists)
+        val request = server.takeRequest()
+        assertEquals("/dav/tblite/backup.json", request.target)
+    }
+
+    // ── baseUrl 归一化 ───────────────────────────────────────
+
+    @Test
+    fun `baseUrl 不带尾斜杠时不会丢失最后一段路径`() = runTest {
+        // 用户配置 https://host/dav(缺尾斜杠)是常见输入,resolve 相对解析
+        // 会把 dav 当"文件"丢掉 → 请求应仍打到 /dav/ 下
+        val noSlashClient = newClient(baseUrl = server.url("/dav").toString())
+        enqueue(201)
+
+        noSlashClient.put("tblite/backup.json", "x".toByteArray())
+
+        val request = server.takeRequest()
+        assertEquals("/dav/tblite/backup.json", request.target)
+    }
+
+    // ── 并发安全 ─────────────────────────────────────────────
+
+    @Test
+    fun `同一实例并发 get 各自拿到自己的响应体`() = runTest {
+        // 两个不同响应排队;若实现共享可变字段,慢请求可能读到快请求的字节
+        enqueue(200, body = "first response")
+        enqueue(200, body = "second response")
+
+        val deferred: List<kotlinx.coroutines.Deferred<String>> = (1..2).map {
+            async { client.get("backup.json").toString(Charsets.UTF_8) }
+        }
+        val results = deferred.map { it.await() }
+
+        // MockWebServer 按队列顺序响应,但两个并发请求到达顺序不定;
+        // 关键断言:两次结果分别是两种已知体之一,不可能出现混合/覆盖损坏
+        assertTrue(results.all { it == "first response" || it == "second response" })
+        assertEquals(2, results.distinct().size)
+    }
+
+    // ── mkcol 边界 ───────────────────────────────────────────
+
+    @Test
+    fun `mkcol 空路径抛 IllegalArgumentException 不发请求`() = runTest {
+        val e = runCatching { client.mkcol("") }.exceptionOrNull()
+
+        assertTrue(e is IllegalArgumentException)
+        assertEquals(0, server.requestCount)
     }
 
     // ── 错误映射 ─────────────────────────────────────────────
