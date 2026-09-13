@@ -17,6 +17,7 @@ output.json
 
 # Gradle files
 .gradle/
+.gradle-home/
 **/build/
 
 # Kotlin compiler cache
@@ -70,3 +71,6 @@ fastlane/readme.md
 CLAUDE.md
 
 commit-message.txt
+
+# Agent scratchpad (issue tracker / specs)
+.scratch/
