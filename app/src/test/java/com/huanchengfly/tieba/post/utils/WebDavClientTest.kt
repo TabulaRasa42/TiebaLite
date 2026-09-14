@@ -81,6 +81,15 @@ class WebDavClientTest {
     }
 
     @Test
+    fun `put 收到 401 映射为 Auth 异常`() = runTest {
+        enqueue(401)
+
+        val e = runCatching { client.put("backup.json", "x".toByteArray()) }.exceptionOrNull()
+
+        assertTrue(e is WebDavException.Auth)
+    }
+
+    @Test
     fun `put 收到 5xx 抛 Http 异常`() = runTest {
         enqueue(502)
 
@@ -231,6 +240,27 @@ class WebDavClientTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test
+    fun `put 路径含点段抛 IllegalArgumentException 不发请求`() = runTest {
+        val e = runCatching { client.put("../escape/backup.json", "x".toByteArray()) }.exceptionOrNull()
+
+        assertTrue(e is IllegalArgumentException)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `put 收到 301 重定向抛 Http 异常不静默降级为 GET`() = runTest {
+        // OkHttp 默认会把 301/302 的 PUT 降级为 GET,备份从未上传却报成功;
+        // 关闭重定向后应显式失败,而非悄悄丢数据
+        enqueue(301)
+
+        val e = runCatching { client.put("backup.json", "x".toByteArray()) }.exceptionOrNull()
+
+        assertTrue(e is WebDavException.Http)
+        assertEquals(301, (e as WebDavException.Http).code)
+        assertEquals(1, server.requestCount)
+    }
+
     // ── 错误映射 ─────────────────────────────────────────────
 
     @Test
@@ -257,6 +287,15 @@ class WebDavClientTest {
         enqueue(403)
 
         val e = runCatching { client.get("backup.json") }.exceptionOrNull()
+
+        assertTrue(e is WebDavException.Auth)
+    }
+
+    @Test
+    fun `put 收到 403 映射为 Auth 异常`() = runTest {
+        enqueue(403)
+
+        val e = runCatching { client.put("backup.json", "x".toByteArray()) }.exceptionOrNull()
 
         assertTrue(e is WebDavException.Auth)
     }

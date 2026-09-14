@@ -1,12 +1,14 @@
 package com.huanchengfly.tieba.post.utils.webdav
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
@@ -35,6 +37,15 @@ class OkHttpWebDavClient(
     // RFC 7617 Basic:UTF-8 的 user:password。预授权,每请求直接带 Authorization 头。
     private val authorization: String =
         okhttp3.Credentials.basic(username, password, charset = Charsets.UTF_8)
+
+    // 关闭自动重定向:OkHttp 对 301/302 会把 PUT 静默降级为 GET,备份从未上传却报 2xx 成功
+    // (静默数据丢失)。显式失败(Http(301))让用户修正 baseUrl,优于悄悄丢数据。
+    // 派生 client 共享底层连接池与线程池,开销可忽略。
+    private val client: OkHttpClient =
+        okHttpClient.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
 
     // ── WebDavClient ─────────────────────────────────────────
 
@@ -93,17 +104,38 @@ class OkHttpWebDavClient(
     /**
      * 执行请求,返回 (状态码, 响应体字节)。状态码由调用方按各方法语义判断
      * (如 MKCOL 405、PROPFIND 404 是合法状态),字节仅供 get() 消费。
-     * 网络层错误映射:IOException → Network。每次调用独立返回,无共享可变状态。
+     * 网络层错误映射:IOException → Network。每次调用独立,无共享可变状态。
+     *
+     * 用 enqueue 异步执行而非 execute + Dispatchers.IO:协程取消时同步阻塞读
+     * 无法中断(线程泄漏/资源占用),enqueue + cancel 让 OkHttp 直接断开连接。
+     * 服务器异常断流(响应头已到、读体中断)同样抛 IOException,统一映射 Network。
      */
     private suspend fun execute(request: Request): Pair<Int, ByteArray> =
-        withContext(Dispatchers.IO) {
-            try {
-                okHttpClient.newCall(request).execute().use { response ->
-                    response.code to response.body.bytes()
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        // body.bytes() 读完整个流并关闭;IOException(含连接中断)走 onFailure
+                        try {
+                            val result = response.code to response.body.bytes()
+                            continuation.resumeWith(Result.success(result))
+                        } catch (e: IOException) {
+                            if (!continuation.isActive) return@use
+                            continuation.resumeWith(Result.failure(WebDavException.Network("connection failed", e)))
+                        }
+                    }
                 }
-            } catch (e: IOException) {
-                throw WebDavException.Network("connection failed", e)
-            }
+
+                override fun onFailure(call: Call, e: IOException) {
+                    if (call.isCanceled()) {
+                        // 协程取消导致的失败,恢复到已取消协程是 no-op,不误报 Network
+                        return
+                    }
+                    continuation.resumeWith(Result.failure(WebDavException.Network("connection failed", e)))
+                }
+            })
         }
 
     /** 2xx 返回,401/403 → Auth,其余 → Http(code)。 */
@@ -128,10 +160,15 @@ class OkHttpWebDavClient(
      * 会规范化掉结尾空段(尾斜杠丢失);字符串解析对尾斜杠原生保留。
      */
     private fun HttpUrl.resolveEncoded(path: String): HttpUrl {
-        val encoded = path.trim('/')
+        val segments = path.trim('/')
             .split('/')
             .filter { it.isNotEmpty() }
-            .joinToString("/") { segment -> encodePathSegment(segment) }
+        // "." / ".." 段会被 toHttpUrl() 按 RFC 3986 规范化解析,put("../x") 将静默逃出
+        // baseUrl 前缀打到任意路径;备份路径不应含相对段,直接拒绝并快速失败。
+        require(segments.none { it == "." || it == ".." }) {
+            "path must not contain '.' or '..' segments: $path"
+        }
+        val encoded = segments.joinToString("/") { segment -> encodePathSegment(segment) }
         val suffix = if (encoded.isNotEmpty()) "/$encoded" else ""
         val trailing = if (path.endsWith("/")) "/" else ""
         // baseUrl 已在构造时归一化为 / 结尾,这里可安全 trimEnd 后拼接
