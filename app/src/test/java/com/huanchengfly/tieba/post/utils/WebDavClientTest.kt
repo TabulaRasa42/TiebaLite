@@ -233,18 +233,34 @@ class WebDavClientTest {
     // ── mkcol 边界 ───────────────────────────────────────────
 
     @Test
-    fun `mkcol 空路径抛 IllegalArgumentException 不发请求`() = runTest {
+    fun `mkcol 空路径抛 InvalidPath 不发请求`() = runTest {
         val e = runCatching { client.mkcol("") }.exceptionOrNull()
 
-        assertTrue(e is IllegalArgumentException)
+        assertTrue(e is WebDavException.InvalidPath)
         assertEquals(0, server.requestCount)
     }
 
     @Test
-    fun `put 路径含点段抛 IllegalArgumentException 不发请求`() = runTest {
+    fun `put 空路径抛 InvalidPath 不发请求`() = runTest {
+        val e = runCatching { client.put("", "x".toByteArray()) }.exceptionOrNull()
+
+        assertTrue(e is WebDavException.InvalidPath)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `get 空路径抛 InvalidPath 不发请求`() = runTest {
+        val e = runCatching { client.get("/") }.exceptionOrNull()
+
+        assertTrue(e is WebDavException.InvalidPath)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `put 路径含点段抛 InvalidPath 不发请求`() = runTest {
         val e = runCatching { client.put("../escape/backup.json", "x".toByteArray()) }.exceptionOrNull()
 
-        assertTrue(e is IllegalArgumentException)
+        assertTrue(e is WebDavException.InvalidPath)
         assertEquals(0, server.requestCount)
     }
 
@@ -271,6 +287,24 @@ class WebDavClientTest {
         val e = runCatching { deadClient.put("x", "y".toByteArray()) }.exceptionOrNull()
 
         assertTrue(e is WebDavException.Network)
+    }
+
+    @Test
+    fun `响应体短于声明长度时按实际字节返回`() = runTest {
+        // onResponse 回调内的读体异常归一为 Network 的分支(catch Throwable)无法在
+        // JVM 层确定性诱导——body.bytes() 只抛 IOException,而 MockWebServer 对
+        // content-length 不符的响应容忍并按实际字节交付。此处断言容错路径不误伤正常响应。
+        server.enqueue(
+            MockResponse(
+                code = 200,
+                headers = Headers.headersOf("Content-Length", "100"),
+                body = "short",
+            )
+        )
+
+        val bytes = client.get("backup.json")
+
+        assertArrayEquals("short".toByteArray(), bytes)
     }
 
     @Test

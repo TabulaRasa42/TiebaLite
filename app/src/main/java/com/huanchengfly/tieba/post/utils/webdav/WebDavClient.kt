@@ -9,6 +9,9 @@ package com.huanchengfly.tieba.post.utils.webdav
  *
  * 远程路径相对 baseUrl 解析(如 baseUrl = https://dav.jianguoyun.com/dav/),
  * 以尾斜杠结尾的路径表示目录,不带尾斜杠表示文件。
+ *
+ * 异常面:所有方法失败一律抛 [WebDavException](含 [WebDavException.InvalidPath]
+ * ——空路径或含 "." / ".." 相对段的路径在请求发出前即拒绝)。
  */
 interface WebDavClient {
 
@@ -26,13 +29,15 @@ interface WebDavClient {
 }
 
 /**
- * WebDAV 操作失败的统一异常,按上层提示需要分三类:
+ * WebDAV 操作失败的统一异常,按上层提示需要分四类:
  * - [Network]:连接失败/超时(检查网络或服务器地址)
  * - [Auth]:401/403 认证失败(检查用户名/应用密码)
  * - [Http]:其余 HTTP 错误(带状态码)
+ * - [InvalidPath]:路径非法(空路径、含 "." / ".." 相对段)——请求未发出
  */
 sealed class WebDavException(message: String, cause: Throwable? = null) : Exception(message, cause) {
     class Network(message: String, cause: Throwable? = null) : WebDavException(message, cause)
     class Auth(message: String) : WebDavException(message)
     class Http(val code: Int, message: String) : WebDavException(message)
+    class InvalidPath(message: String) : WebDavException(message)
 }

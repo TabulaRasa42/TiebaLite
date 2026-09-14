@@ -63,7 +63,10 @@ class OkHttpWebDavClient(
     }
 
     override suspend fun mkcol(path: String) {
-        require(path.trim('/').isNotEmpty()) { "mkcol path must not be empty or root" }
+        // 空路径的逐级循环会静默跳过,先显式拒绝(与 resolveEncoded 同语义)
+        if (path.trim('/').isEmpty()) {
+            throw WebDavException.InvalidPath("path must not be empty: \"$path\"")
+        }
         val collectionPath = ensureTrailingSlash(path)
         // 逐级补齐缺失父级:直接 MKCOL /backup/tblite/ 时,若 /backup/ 不存在,
         // 部分服务器(标准行为)返回 409,先逐级创建避免。
@@ -116,13 +119,17 @@ class OkHttpWebDavClient(
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onResponse(call: Call, response: Response) {
-                    response.use {
-                        // body.bytes() 读完整个流并关闭;IOException(含连接中断)走 onFailure
-                        try {
+                    // 回调内逃逸的异常会成为 OkHttp AsyncCall 线程的未捕获异常 → 应用崩溃;
+                    // 全部归一为 WebDavException 恢复到调用方协程,只让单次操作失败。
+                    try {
+                        response.use {
                             val result = response.code to response.body.bytes()
                             continuation.resumeWith(Result.success(result))
-                        } catch (e: IOException) {
-                            if (!continuation.isActive) return@use
+                        }
+                    } catch (e: Throwable) {
+                        // IOException = 连接中断(含服务器断流);其余运行时异常同样不能
+                        // 逃出回调,统一映射 Network 交给上层
+                        if (continuation.isActive) {
                             continuation.resumeWith(Result.failure(WebDavException.Network("connection failed", e)))
                         }
                     }
@@ -160,13 +167,18 @@ class OkHttpWebDavClient(
      * 会规范化掉结尾空段(尾斜杠丢失);字符串解析对尾斜杠原生保留。
      */
     private fun HttpUrl.resolveEncoded(path: String): HttpUrl {
+        // 空路径 = PUT/GET/PROPFIND 打到 baseUrl 目录集合本身,无意义且部分服务器
+        // 会异常应答;统一快速失败(与 mkcol 的空路径拒绝一致)。
         val segments = path.trim('/')
             .split('/')
             .filter { it.isNotEmpty() }
+        if (segments.isEmpty()) {
+            throw WebDavException.InvalidPath("path must not be empty: \"$path\"")
+        }
         // "." / ".." 段会被 toHttpUrl() 按 RFC 3986 规范化解析,put("../x") 将静默逃出
         // baseUrl 前缀打到任意路径;备份路径不应含相对段,直接拒绝并快速失败。
-        require(segments.none { it == "." || it == ".." }) {
-            "path must not contain '.' or '..' segments: $path"
+        if (segments.any { it == "." || it == ".." }) {
+            throw WebDavException.InvalidPath("path must not contain '.' or '..' segments: $path")
         }
         val encoded = segments.joinToString("/") { segment -> encodePathSegment(segment) }
         val suffix = if (encoded.isNotEmpty()) "/$encoded" else ""
