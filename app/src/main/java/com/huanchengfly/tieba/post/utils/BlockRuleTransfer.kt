@@ -7,6 +7,9 @@ import com.huanchengfly.tieba.post.models.database.Block
 import com.huanchengfly.tieba.post.models.database.Block.Companion.getKeywords
 import com.huanchengfly.tieba.post.models.database.History
 import com.huanchengfly.tieba.post.toJson
+import com.huanchengfly.tieba.post.utils.backup.BackupMerge
+import com.huanchengfly.tieba.post.utils.backup.BlockStore
+import com.huanchengfly.tieba.post.utils.backup.HistoryStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -64,43 +67,21 @@ object BlockRuleTransfer {
                 stream.readBytes().toString(Charsets.UTF_8)
             } ?: throw IllegalStateException("cannot open input stream")
 
-            val rules = BlockRuleSerializer.deserialize(json)
-            // 可变快照：文件内出现重复规则时，前一条插入后即可被后续判重命中
-            val existing = DatabaseUtil.getAllBlocks().toMutableList()
-            var added = 0
-            var skipped = 0
-            rules.forEach { rule ->
-                // 存储的 keywords 对用户类型规则为 null，导出序列化为 "[]"；
-                // 双方都归一化为 List<String> 再比较，避免 null 与 "[]" 恒不相等导致重复导入。
-                // username 同理：存 null 但导入入库时 orEmpty() 为 ""，双方归一化再比，
-                // 否则 null-username 规则每次导入都会重复入库
-                val duplicated = existing.any {
-                    it.category == rule.category &&
-                            it.type == rule.type &&
-                            it.isRegex == rule.isRegex &&
-                            it.getKeywords() == rule.keywords &&
-                            it.username.orEmpty() == rule.username.orEmpty() &&
-                            it.uid == rule.uid
-                }
-                if (duplicated) {
-                    skipped++
-                } else {
-                    val block = Block(
-                        category = rule.category,
-                        type = rule.type,
-                        keywords = if (rule.keywords.isEmpty()) null else rule.keywords.toJson(),
-                        username = rule.username.orEmpty(),
-                        uid = rule.uid,
-                        isRegex = rule.isRegex
-                    )
-                    existing.add(BlockManager.addBlock(block))
-                    added++
-                }
-            }
-            ImportResult(added, skipped)
+            // 判重合并逻辑与 WebDAV 备份恢复共用 BackupMerge(单一来源)
+            val result = BackupMerge.mergeBlockRules(BlockRuleSerializer.deserialize(json), DatabaseBlockStore)
+            ImportResult(result.added, result.skipped)
         }
 
     data class ImportResult(val added: Int, val skipped: Int)
+}
+
+/** 生产实现:屏蔽规则入库走 BlockManager(同步内存索引) */
+object DatabaseBlockStore : BlockStore {
+    override suspend fun all(): List<Block> = DatabaseUtil.getAllBlocks()
+
+    override suspend fun add(block: Block) {
+        BlockManager.addBlock(block)
+    }
 }
 
 data class HistoryRecordData(
@@ -161,39 +142,19 @@ object HistoryTransfer {
                 stream.readBytes().toString(Charsets.UTF_8)
             } ?: throw IllegalStateException("cannot open input stream")
 
-            val records = HistorySerializer.deserialize(json)
-            // 去重键必须含 type：帖子 id 与数字吧名共用 data 字符串空间，
-            // 只按 data 判重会把不同类型的合法记录误判为重复丢弃
-            val existingDataKeys = DatabaseUtil.getAllHistoryNoLimit()
-                .map { it.type to it.data }
-                .toHashSet()
-            var added = 0
-            var skipped = 0
-            records.forEach { record ->
-                val key = record.type to record.data
-                if (key in existingDataKeys) {
-                    skipped++
-                } else {
-                    // 直接插入原始记录，保留原 timestamp/count；不去重键复用 upsert
-                    // （upsert 会把 timestamp 重置为现在、count+1，会污染排序）
-                    DatabaseUtil.upsertHistoryRaw(
-                        History(
-                            title = record.title,
-                            data = record.data,
-                            type = record.type,
-                            timestamp = record.timestamp,
-                            count = record.count,
-                            extras = record.extras,
-                            avatar = record.avatar,
-                            username = record.username
-                        )
-                    )
-                    existingDataKeys.add(key)
-                    added++
-                }
-            }
-            HistoryTransfer.ImportResult(added, skipped)
+            // 判重合并逻辑与 WebDAV 备份恢复共用 BackupMerge(单一来源)
+            val result = BackupMerge.mergeHistories(HistorySerializer.deserialize(json), DatabaseHistoryStore)
+            HistoryTransfer.ImportResult(result.added, result.skipped)
         }
 
     data class ImportResult(val added: Int, val skipped: Int)
+}
+
+/** 生产实现:浏览记录入库走 DatabaseUtil(upsertHistoryRaw 保留原始 timestamp/count) */
+object DatabaseHistoryStore : HistoryStore {
+    override suspend fun all(): List<History> = DatabaseUtil.getAllHistoryNoLimit()
+
+    override suspend fun insertRaw(history: History) {
+        DatabaseUtil.upsertHistoryRaw(history)
+    }
 }
