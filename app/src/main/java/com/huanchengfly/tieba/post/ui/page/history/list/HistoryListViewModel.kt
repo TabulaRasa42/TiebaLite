@@ -31,24 +31,25 @@ import javax.inject.Inject
 
 // 跨 tab 刷新信号：Imported/DeleteAll 全局事件只被当前可见的 pager 页收到
 // （HorizontalPager 仅组合当前页，另一 tab 的 onGlobalEvent 收集器不在组合中），
-// 未组合的 tab 重新组合时通过此标记补一次刷新
+// 未组合的 tab 重新组合时通过此标记补一次刷新。
+// pending 按 tab（type）各挂一个：信号可能来自 HistoryPage 自身（导入/清空，此时两 tab
+// 都组合着或一可见一隐藏），也可能来自外部页面（如备份恢复，此时两 tab 都不在组合中）——
+// 单个布尔会被返回重组的当前 tab 抢先 consume，隐藏 tab 永远刷不到
 object HistoryListRefreshSignal {
-    @Volatile
-    var pending: Boolean = false
-        private set
+    // key = tab 的 type（HistoryUtil.TYPE_THREAD / TYPE_FORUM）
+    private val pending = java.util.concurrent.ConcurrentHashMap<Int, java.util.concurrent.atomic.AtomicBoolean>()
+
+    private fun flag(type: Int): java.util.concurrent.atomic.AtomicBoolean =
+        pending.computeIfAbsent(type) { java.util.concurrent.atomic.AtomicBoolean(false) }
 
     fun mark() {
-        pending = true
+        flag(HistoryUtil.TYPE_THREAD).set(true)
+        flag(HistoryUtil.TYPE_FORUM).set(true)
     }
 
-    fun clear() {
-        pending = false
-    }
-
-    fun consume(): Boolean {
-        val had = pending
-        pending = false
-        return had
+    fun consume(type: Int): Boolean {
+        val f = flag(type)
+        return f.getAndSet(false)
     }
 }
 

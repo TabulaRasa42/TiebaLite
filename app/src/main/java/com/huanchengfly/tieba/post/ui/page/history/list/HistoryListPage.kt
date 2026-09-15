@@ -76,7 +76,7 @@ fun HistoryListPage(
         initial = null
     )
     LaunchedEffect(Unit) {
-        if (HistoryListRefreshSignal.consume()) {
+        if (HistoryListRefreshSignal.consume(type)) {
             val filterDay = filteredDayStart
             if (filterDay != null) {
                 viewModel.send(HistoryListUiIntent.SelectDay(filterDay))

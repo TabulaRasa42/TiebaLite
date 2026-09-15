@@ -56,8 +56,9 @@ class WebDavCredentialStore(
     }
 
     /**
-     * 观测凭据状态流(UI 回填用):凭据四键变化时发射,解密在 IO 线程执行,
+     * 观测凭据状态流:凭据四键变化时发射,解密在 IO 线程执行,
      * 不因其他无关设置键的写入而触发(密文不变则解密结果必然一致,以密文判变)。
+     * 目前仅测试使用;生产 UI(备份配置页)是一次性 load() 回填,不走本流。
      */
     fun loadFlow(): Flow<WebDavCredentialsState> {
         return dataStore.data

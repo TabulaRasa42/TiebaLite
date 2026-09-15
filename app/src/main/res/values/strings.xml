@@ -604,11 +604,26 @@
     <string name="toast_backup_reason_http">服务器返回错误（HTTP %1$d）</string>
     <string name="toast_backup_reason_invalid_path">远程路径无效</string>
     <string name="toast_backup_reason_invalid_url">服务器地址无效，请检查格式</string>
+    <string name="toast_backup_reason_unknown">操作失败：%1$s</string>
     <string name="toast_backup_config_saved">配置已保存</string>
     <string name="toast_backup_config_incomplete">请先填写服务器地址、用户名与远程路径</string>
-    <string name="toast_backup_password_required">请先输入密码</string>
-    <string name="toast_backup_cipher_unavailable">加密服务不可用，密码未能保存，请稍后重试</string>
+    <string name="toast_backup_password_required">请先输入密码</string>    <string name="toast_backup_cipher_unavailable">加密服务不可用，密码未能保存，请稍后重试</string>
     <string name="toast_backup_save_failed">保存失败：%1$s</string>
     <string name="toast_backup_needs_password">已载入配置，但密码无法读取，请重新输入密码后保存</string>
     <string name="desc_backup_password_visible">显示或隐藏密码</string>
+    <string name="toast_backup_success">备份成功：浏览记录 %1$d 条、屏蔽规则 %2$d 条、设置 %3$d 项</string>
+    <string name="toast_backup_failed">备份失败：%1$s</string>
+    <string name="toast_restore_success">恢复成功：%1$s</string>
+    <string name="toast_restore_failed">恢复失败：%1$s</string>
+    <string name="toast_restore_nothing_selected">请至少勾选一项要恢复的数据</string>
+    <string name="toast_restore_part_history">浏览记录新增 %1$d 条、跳过 %2$d 条</string>
+    <string name="toast_restore_part_rules">屏蔽规则新增 %1$d 条、跳过 %2$d 条</string>
+    <string name="toast_restore_part_prefs">设置覆盖 %1$d 项</string>
+    <string name="toast_restore_reason_no_backup">远端还没有备份文件，请先在原设备上执行「立即备份」</string>
+    <string name="toast_restore_reason_version">备份版本（v%1$d）高于本机支持版本（v%2$d），请先升级 app 再恢复</string>
+    <string name="toast_restore_reason_corrupted">备份文件损坏或不是本应用生成的备份</string>
+    <string name="restore_dialog_title">从备份恢复</string>
+    <string name="restore_part_history">浏览记录</string>
+    <string name="restore_part_block_rules">屏蔽规则</string>
+    <string name="restore_part_preferences">软件设置（覆盖本机同名设置）</string>
 </resources>
