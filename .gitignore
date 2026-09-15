@@ -74,4 +74,3 @@ commit-message.txt
 
 # Agent scratchpad (issue tracker / specs)
 .scratch/
-.claude/settings.json
