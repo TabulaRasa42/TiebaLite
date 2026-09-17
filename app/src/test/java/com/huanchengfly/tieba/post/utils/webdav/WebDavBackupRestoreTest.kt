@@ -13,8 +13,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.huanchengfly.tieba.post.models.database.Block
 import com.huanchengfly.tieba.post.models.database.History
-import com.huanchengfly.tieba.post.utils.backup.BlockStore
-import com.huanchengfly.tieba.post.utils.backup.HistoryStore
+import com.huanchengfly.tieba.post.utils.backup.InMemoryBlockStore
+import com.huanchengfly.tieba.post.utils.backup.InMemoryHistoryStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -84,24 +84,9 @@ class WebDavBackupRestoreTest {
         }
     }
 
-    private class InMemoryHistoryStore : HistoryStore {
-        val rows = mutableListOf<History>()
-        override suspend fun all(): List<History> = rows.toList()
-        override suspend fun insertRaw(history: History) {
-            rows += history
-        }
-    }
-
-    private class InMemoryBlockStore : BlockStore {
-        val rows = mutableListOf<Block>()
-        override suspend fun all(): List<Block> = rows.toList()
-        override suspend fun add(block: Block) {
-            rows += block
-        }
-    }
-
     private class Fixture {
         val client = FakeWebDavClient()
+        // 内存 store 夹具共享自 backup 包(06 号票,InMemoryStores.kt)
         val historyStore = InMemoryHistoryStore()
         val blockStore = InMemoryBlockStore()
         val dataStore = InMemoryDataStore()
@@ -310,6 +295,32 @@ class WebDavBackupRestoreTest {
         val third = f.backupRestore.restore(equivalent, false, true, false)
         assertEquals(0, third.blockRules?.added)
         assertEquals(1, third.blockRules?.skipped)
+    }
+
+    @Test
+    fun `uid为空串的规则与null-uid存量规则判重命中`() = runBlocking {
+        // username 归一化的同一坑:库存 null(导出省略),导入文件可能写 ""(手工编辑/其他工具导出),
+        // 不归一化则 null-uid 规则每次导入都重复入库
+        val f = Fixture()
+        f.backupRestore.upload("/tblite/", emptyList(), sampleBlocks(), emptyPreferences())
+        val backup = f.backupRestore.download("/tblite/")
+        f.backupRestore.restore(backup, false, true, false)
+
+        val emptyUid = BackupJson.parse(
+            """
+            {"version": 1,
+             "history": {"records": []},
+             "blockRules": {"rules": [
+               {"category": 10, "type": 0, "keywords": ["广告"], "username": "", "uid": "", "isRegex": false}
+             ]}}
+            """.trimIndent()
+        )
+
+        val result = f.backupRestore.restore(emptyUid, false, true, false)
+
+        assertEquals(0, result.blockRules?.added)
+        assertEquals(1, result.blockRules?.skipped)
+        assertEquals(1, f.blockStore.rows.size)
     }
 
     @Test

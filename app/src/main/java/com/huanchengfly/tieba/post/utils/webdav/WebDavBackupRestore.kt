@@ -83,6 +83,10 @@ class WebDavBackupRestore(
      * 损坏段抛 [BackupFormatException] 时三部分零写入(与版本拒绝同一整体拒绝语义)。
      * 勾选段在备份中整体缺失(旧版本/被截断的备份)同样抛 [BackupFormatException]——
      * "备份里没有这一段"不是可静默的空恢复。
+     *
+     * 写入阶段各部分独立成段:浏览记录/屏蔽规则各自在自己的合并事务内原子(06 号票),
+     * 设置经 DataStore 自身原子;跨部分无整体事务,后者失败时已提交部分保留——
+     * 判重合并幂等,重跑恢复即可补齐,失败提示如实报错。
      */
     suspend fun restore(
         backup: BackupJson.ParsedBackup,

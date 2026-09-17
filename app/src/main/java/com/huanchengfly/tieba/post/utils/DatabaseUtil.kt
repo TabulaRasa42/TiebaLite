@@ -1,5 +1,6 @@
 package com.huanchengfly.tieba.post.utils
 
+import androidx.room.withTransaction
 import com.huanchengfly.tieba.post.App
 import com.huanchengfly.tieba.post.database.AppDatabase
 import com.huanchengfly.tieba.post.database.AppDatabaseEntryPoint
@@ -11,7 +12,9 @@ import com.huanchengfly.tieba.post.models.database.SearchHistory
 import com.huanchengfly.tieba.post.models.database.SearchPostHistory
 import com.huanchengfly.tieba.post.models.database.TopForum
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 
 object DatabaseUtil {
     private val appDatabase: AppDatabase by lazy {
@@ -20,6 +23,20 @@ object DatabaseUtil {
             AppDatabaseEntryPoint::class.java,
         ).appDatabase()
     }
+
+    /**
+     * 在 Room 事务内执行 [block](06 号票):块内所有 DAO 挂起调用自动加入同一事务,
+     * 与其他事务串行化,消除"读全表 → 判重 → 插入"的 check-then-act 竞态窗口。
+     * room-ktx 的 withTransaction;事务内抛异常整体回滚并向调用方透传原异常。
+     *
+     * NonCancellable:调用方协程在事务中途被取消会触发回滚,而 BlockManager.addBlock
+     * 的内存索引不随 DB 回滚,留下幻影条目(见 DatabaseBlockStore.inTransaction 注释)。
+     * 把不可取消结构性下沉到此处,事务块内的调用点无需各自记得包 NonCancellable。
+     */
+    suspend fun <T> inDatabaseTransaction(block: suspend () -> T): T =
+        withContext(NonCancellable) {
+            appDatabase.withTransaction { block() }
+        }
 
     // ── Account ─────────────────────────────────────────────────
     suspend fun getAllAccounts(): List<Account> = appDatabase.accountDao().getAll()
