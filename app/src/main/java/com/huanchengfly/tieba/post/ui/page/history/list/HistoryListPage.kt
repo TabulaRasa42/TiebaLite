@@ -2,17 +2,22 @@ package com.huanchengfly.tieba.post.ui.page.history.list
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.DropdownMenuItem
+import androidx.compose.material.Icon
 import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -201,7 +206,8 @@ fun HistoryListPage(
     ) {
         if (isFiltering) {
             // 按天筛选：平铺模式，单日记录量有限，无分页；当天无记录时空态占位
-            if (dayHistoryData.isEmpty()) {
+            val filterDay = filteredDayStart
+            if (dayHistoryData.isEmpty() || filterDay == null) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -211,9 +217,13 @@ fun HistoryListPage(
             } else {
                 HistoryFlatList(
                     histories = dayHistoryData,
+                    filterDayStart = filterDay,
                     lazyListState = flatListState,
                     onItemClicked = historyClicked,
-                    onItemDeleted = historyDeleted
+                    onItemDeleted = historyDeleted,
+                    onClearFilter = {
+                        viewModel.send(HistoryListUiIntent.ClearDayFilter)
+                    }
                 )
             }
         } else {            LoadMoreLayout(
@@ -314,14 +324,41 @@ fun HistoryListPage(
 @Composable
 private fun HistoryFlatList(
     histories: List<History>,
+    filterDayStart: Long,
     lazyListState: LazyListState,
     onItemClicked: (History) -> Unit,
     onItemDeleted: (History) -> Unit,
+    onClearFilter: () -> Unit,
 ) {
     MyLazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = lazyListState
     ) {
+        // 筛选日期吸顶提示：样式与分组视图的日期遮罩（Chip）一致；点 Chip 本身无反应，
+        // chip 内小 x 清除筛选
+        stickyHeader(key = "FilteredDayHeader") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(ExtendedTheme.colors.background)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                val (y, m, d) = DateTimeUtils.toCalendarFields(filterDayStart)
+                Chip(
+                    text = stringResource(id = R.string.title_history_filtered_day, "$y 年 ${m + 1} 月 $d 日"),
+                    invertColor = true,
+                    appendIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = stringResource(id = R.string.title_cancel_filter),
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable { onClearFilter() }
+                        )
+                    }
+                )
+            }
+        }
         items(
             items = histories,
             key = { it.id }

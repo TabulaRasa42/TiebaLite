@@ -49,7 +49,6 @@ import com.huanchengfly.tieba.post.ui.widgets.compose.TabRow
 import com.huanchengfly.tieba.post.ui.widgets.compose.TitleCentredToolbar
 import com.huanchengfly.tieba.post.ui.widgets.compose.rememberDialogState
 import com.huanchengfly.tieba.post.ui.widgets.compose.rememberMenuState
-import com.huanchengfly.tieba.post.utils.DateTimeUtils
 import com.huanchengfly.tieba.post.utils.HistoryTransfer
 import com.huanchengfly.tieba.post.utils.HistoryUtil
 import com.ramcosta.composedestinations.annotation.DeepLink
@@ -127,8 +126,8 @@ fun HistoryPage(
     }
 
     // 按天筛选：对话框与筛选状态在各 tab 的 HistoryListPage（各自 VM 各自状态），
-    // 顶栏按钮/标题/图标高亮经 HistoryFilterBus 桥接（见 HistoryListPage 的注册逻辑）。
-    // bus 的筛选日是 mutableStateOf，读它即订阅重组
+    // 顶栏筛选按钮图标高亮经 HistoryFilterBus 桥接（见 HistoryListPage 的注册逻辑）。
+    // bus 的筛选日是 mutableStateOf，读它即订阅重组；筛选日期的展示在列表内吸顶 Chip（见 HistoryListPage）
     val filterDayStart = HistoryFilterBus.currentFilterDayStart
 
     // 清空浏览记录确认弹窗
@@ -172,12 +171,7 @@ fun HistoryPage(
             TitleCentredToolbar(
                 title = {
                     Text(
-                        text = if (filterDayStart != null) {
-                            val (y, m, d) = DateTimeUtils.toCalendarFields(filterDayStart)
-                            stringResource(id = R.string.title_history_filtered, "$y 年 ${m + 1} 月 $d 日")
-                        } else {
-                            stringResource(id = R.string.title_history)
-                        },
+                        text = stringResource(id = R.string.title_history),
                         fontWeight = FontWeight.Bold, style = MaterialTheme.typography.h6
                     )
                 },

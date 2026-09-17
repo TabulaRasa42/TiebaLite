@@ -270,7 +270,8 @@
     <string name="title_history_thread">贴子记录</string>
     <string name="title_history_forum">经过贴吧</string>
     <string name="title_filter_by_day">按日期筛选</string>
-    <string name="title_history_filtered">浏览记录（%1$s）</string>
+    <string name="title_history_filtered_day">%1$s</string>
+    <string name="title_cancel_filter">取消筛选</string>
     <string name="title_clear_block_list">清空名单</string>
     <string name="title_clear_black_list">清空黑名单？</string>
     <string name="title_clear_white_list">清空白名单？</string>
