@@ -349,6 +349,36 @@ class LocalBackupTransferTest {
         assertTrue(f.blockStore.rows.isEmpty())
     }
 
+    @Test
+    fun `readBackup非本应用备份的JSON在校验步拒绝`() = runBlocking {
+        val f = Fixture()
+
+        // 旧格式浏览记录导出文件(顶层 records,无三段嵌套)
+        assertFailsWith<BackupFormatException> {
+            LocalBackupTransfer.readBackup(
+                ByteArrayInputStream(
+                    """{"version": 1, "exportedAt": 1, "records": [{"title": "t", "data": "d", "type": 0, "timestamp": 1, "count": 1}]}"""
+                        .toByteArray(Charsets.UTF_8)
+                )
+            )
+        }
+        // 恰好带 version 的任意 JSON 对象(如某些应用的状态文件)
+        assertFailsWith<BackupFormatException> {
+            LocalBackupTransfer.readBackup(
+                ByteArrayInputStream("""{"version": 1, "data": "whatever"}""".toByteArray(Charsets.UTF_8))
+            )
+        }
+        // 只有一段的残缺对象
+        assertFailsWith<BackupFormatException> {
+            LocalBackupTransfer.readBackup(
+                ByteArrayInputStream("""{"version": 1, "history": {"records": []}}""".toByteArray(Charsets.UTF_8))
+            )
+        }
+
+        assertTrue(f.historyStore.rows.isEmpty())
+        assertTrue(f.blockStore.rows.isEmpty())
+    }
+
     // ── 往返:导出再导入还原 ──────────────────────────────────
 
     @Test

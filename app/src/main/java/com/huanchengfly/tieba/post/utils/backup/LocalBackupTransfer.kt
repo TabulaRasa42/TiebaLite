@@ -4,6 +4,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import com.huanchengfly.tieba.post.models.database.Block
 import com.huanchengfly.tieba.post.models.database.History
+import com.huanchengfly.tieba.post.utils.webdav.BackupFormatException
 import com.huanchengfly.tieba.post.utils.webdav.BackupJson
 import com.huanchengfly.tieba.post.utils.webdav.BackupVersionException
 import kotlinx.coroutines.Dispatchers
@@ -61,13 +62,15 @@ object LocalBackupTransfer {
     )
 
     /**
-     * 读取 [inputStream] 并校验为**本机可恢复的**备份文件:结构守卫([BackupJson.parse])
-     * 与版本守卫(高于 [BackupJson.CURRENT_VERSION] 拒绝),不解析各段、不写入存储。
-     * 坏文件/高版本在此整体拒绝,勾选数据项之前就拿到明确失败——用户不必先勾选
-     * 再被告知文件不可用(编排 [BackupRestore.restore] 内的版本守卫保留:共享编排
-     * 仍是恢复语义的单一来源,此处仅是本地流程的前置快捷路径,双重检查幂等)。
-     * 返回的 ParsedBackup 交给 [BackupRestore.restore] 完成恢复。
-     * 不关闭流(由调用方 use 管理)。
+     * 读取 [inputStream] 并校验为**本机可恢复的**备份文件:结构守卫([BackupJson.parse])、
+     * 版本守卫(高于 [BackupJson.CURRENT_VERSION] 拒绝)与三段齐全守卫——
+     * [BackupJson.serialize] 无条件写三段(空数据也是空段),缺任何一段即非本应用
+     * 备份(顶层 records 的旧格式导出文件、恰好带 version 的任意 JSON 都在此拦住)。
+     * 不解析各段、不写入存储;坏文件/高版本/非本应用备份在此整体拒绝,勾选数据项
+     * 之前就拿到明确失败——用户不必先勾选再被告知文件不可用(编排
+     * [BackupRestore.restore] 内的守卫保留:共享编排仍是恢复语义的单一来源,此处
+     * 仅是本地流程的前置快捷路径,双重检查幂等)。返回的 ParsedBackup 交给
+     * [BackupRestore.restore] 完成恢复。不关闭流(由调用方 use 管理)。
      */
     suspend fun readBackup(inputStream: InputStream): BackupJson.ParsedBackup =
         withContext(Dispatchers.IO) {
@@ -75,6 +78,10 @@ object LocalBackupTransfer {
             val backup = BackupJson.parse(json)
             if (backup.version > BackupJson.CURRENT_VERSION) {
                 throw BackupVersionException(backup.version, BackupJson.CURRENT_VERSION)
+            }
+            // 三段齐全 = 本应用备份的身份判据
+            if (!backup.hasHistory || !backup.hasBlockRules || !backup.hasPreferences) {
+                throw BackupFormatException("backup file is not a tblite backup (missing sections)")
             }
             backup
         }
