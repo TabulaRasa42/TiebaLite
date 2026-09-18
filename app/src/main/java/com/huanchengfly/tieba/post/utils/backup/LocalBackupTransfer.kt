@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import com.huanchengfly.tieba.post.models.database.Block
 import com.huanchengfly.tieba.post.models.database.History
 import com.huanchengfly.tieba.post.utils.webdav.BackupJson
+import com.huanchengfly.tieba.post.utils.webdav.BackupVersionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.InputStream
@@ -18,12 +19,14 @@ import java.io.OutputStream
  * (NonCancellable 语义由 UI 层 withContext(NonCancellable) 包裹,与 WebDAV 上传对齐;
  * 本层保证"序列化 → 单次 write → flush"连续完成,不产生半截 JSON 的应用侧窗口)。
  *
- * 导入:读取流 → [BackupJson.parse] → 委托共享编排 [BackupRestore.restore]
- * (版本守卫在前、先解析全部再写入、判重合并/按键覆盖)——与 WebDAV 恢复同一编排。
+ * 导入拆两步(用户流程:选文件 → 校验 → 勾选数据项 → 恢复):
+ * ① [readBackup] 读取 + 结构/版本守卫(坏文件/高版本当场整体拒绝,零写入);
+ * ② 恢复阶段把校验通过的 ParsedBackup 交给共享编排 [BackupRestore.restore]
+ * (先解析全部再写入、判重合并/按键覆盖,与 WebDAV 恢复同一编排)。
  *
  * 异常面:非 JSON/缺 version 抛 [com.huanchengfly.tieba.post.utils.webdav.BackupFormatException],
  * version 超上界抛 [com.huanchengfly.tieba.post.utils.webdav.BackupVersionException],
- * 均整体拒绝零写入(编排语义);IO 失败 IOException 直通,由 UI 层提示。
+ * 均整体拒绝零写入;IO 失败 IOException 直通,由 UI 层提示。
  */
 object LocalBackupTransfer {
 
@@ -58,29 +61,21 @@ object LocalBackupTransfer {
     )
 
     /**
-     * 从 [inputStream] 读取备份 JSON 并按勾选恢复(委托 [BackupRestore.restore])。
+     * 读取 [inputStream] 并校验为**本机可恢复的**备份文件:结构守卫([BackupJson.parse])
+     * 与版本守卫(高于 [BackupJson.CURRENT_VERSION] 拒绝),不解析各段、不写入存储。
+     * 坏文件/高版本在此整体拒绝,勾选数据项之前就拿到明确失败——用户不必先勾选
+     * 再被告知文件不可用(编排 [BackupRestore.restore] 内的版本守卫保留:共享编排
+     * 仍是恢复语义的单一来源,此处仅是本地流程的前置快捷路径,双重检查幂等)。
+     * 返回的 ParsedBackup 交给 [BackupRestore.restore] 完成恢复。
      * 不关闭流(由调用方 use 管理)。
      */
-    suspend fun importFrom(
-        inputStream: InputStream,
-        restoreHistory: Boolean,
-        restoreBlockRules: Boolean,
-        restorePreferences: Boolean,
-        historyStore: HistoryStore,
-        blockStore: BlockStore,
-        preferencesDataStore: DataStore<Preferences>,
-    ): BackupRestore.RestoreResult =
+    suspend fun readBackup(inputStream: InputStream): BackupJson.ParsedBackup =
         withContext(Dispatchers.IO) {
             val json = inputStream.readBytes().toString(Charsets.UTF_8)
             val backup = BackupJson.parse(json)
-            BackupRestore.restore(
-                backup,
-                restoreHistory,
-                restoreBlockRules,
-                restorePreferences,
-                historyStore,
-                blockStore,
-                preferencesDataStore,
-            )
+            if (backup.version > BackupJson.CURRENT_VERSION) {
+                throw BackupVersionException(backup.version, BackupJson.CURRENT_VERSION)
+            }
+            backup
         }
 }

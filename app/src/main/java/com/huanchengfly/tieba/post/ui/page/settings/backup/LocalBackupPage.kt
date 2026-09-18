@@ -58,6 +58,7 @@ import com.huanchengfly.tieba.post.utils.HistoryUtil
 import com.huanchengfly.tieba.post.utils.backup.BackupRestore
 import com.huanchengfly.tieba.post.utils.backup.LocalBackupTransfer
 import com.huanchengfly.tieba.post.utils.webdav.BackupFormatException
+import com.huanchengfly.tieba.post.utils.webdav.BackupJson
 import com.huanchengfly.tieba.post.utils.webdav.BackupVersionException
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -77,8 +78,11 @@ import java.util.Locale
  *
  * "立即备份":确认弹窗(提示覆盖备份中的软件设置,取消零动作)→ SAF CreateDocument
  * 选保存位置 → 导出三段 JSON,文件名 tblite_backup_<时间戳>.json。
- * "从备份恢复":三部分勾选弹窗(默认全选,零勾选拒绝)→ SAF OpenDocument 选文件 →
- * 按勾选恢复(判重合并 + 软件设置按键覆盖)→ 浏览记录列表刷新。
+ * "从备份恢复"(选文件 → 校验 → 勾选数据项):SAF OpenDocument 选文件 → 读入并校验
+ * ([LocalBackupTransfer.readBackup],结构/版本守卫,坏文件/高版本当场整体拒绝零写入)→
+ * 校验通过才弹三部分勾选弹窗(默认全选,零勾选拒绝)→ 确认后把内存中的
+ * ParsedBackup 交给共享编排 [BackupRestore.restore](判重合并 + 软件设置按键覆盖)
+ * → 浏览记录列表刷新。坏文件在勾选前就被拦住,不必先勾选再被告知文件不可用。
  *
  * 写入/恢复包在 NonCancellable 中断页也不留半截文件/半截写入(沿 HistoryPage 导入导出
  * 与 WebDAV 恢复先例)。UI 层不设 seam(spec 决策),行为经真机人工验证。
@@ -93,10 +97,12 @@ fun LocalBackupPage(
 
     var backingUp by remember { mutableStateOf(false) }
     var restoring by remember { mutableStateOf(false) }
+    // 选文件 → 校验期间的读入反馈(spec 流程第二步);与 restoring 分开:校验失败不进勾选弹窗
+    var validating by remember { mutableStateOf(false) }
 
     // 备份确认弹窗:确认后进 SAF 选位(spec:确认弹窗在前,选位在后)
     val backupConfirmDialogState = rememberDialogState()
-    // 恢复勾选状态:弹窗每次打开重置为全选(spec:默认全选,可取消勾选)
+    // 恢复勾选状态:每次进入弹窗重置为全选(spec:默认全选,可取消勾选)
     val restoreDialogState = rememberDialogState()
     var restoreHistory by rememberSaveable { mutableStateOf(true) }
     var restoreBlockRules by rememberSaveable { mutableStateOf(true) }
@@ -105,6 +111,11 @@ fun LocalBackupPage(
     // 确认弹窗通过后启动的 SAF 选位:launcher 回调里无法可靠读取弹窗流程的瞬时状态,
     // 用 pendingBackup 标记"确认已通过、等待选位/落地"
     var pendingBackup by rememberSaveable { mutableStateOf(false) }
+
+    // 校验通过的备份:内存持有,勾选确认后直接交编排,不再二次读文件。
+    // remember(非 Saveable):旋转后丢失,勾选弹窗自动关闭,重新选文件即可——
+    // 与"恢复中途旋转丢状态"同级,不为它引入 parcelable 解析结果
+    var validatedBackup by remember { mutableStateOf<BackupJson.ParsedBackup?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -139,43 +150,25 @@ fun LocalBackupPage(
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null && !backingUp && !restoring) {
-            val historyChecked = restoreHistory
-            val blockRulesChecked = restoreBlockRules
-            val preferencesChecked = restorePreferences
-            restoring = true
+        if (uri != null && !backingUp && !restoring && !validating) {
+            validating = true
             coroutineScope.launch {
-                importBackup(context, uri, historyChecked, blockRulesChecked, preferencesChecked)
-                    .onSuccess { result ->
-                        val parts = buildList {
-                            if (historyChecked && result.history != null) {
-                                add(context.getString(R.string.toast_restore_part_history, result.history.added, result.history.skipped))
-                            }
-                            if (blockRulesChecked && result.blockRules != null) {
-                                add(context.getString(R.string.toast_restore_part_rules, result.blockRules.added, result.blockRules.skipped))
-                            }
-                            if (preferencesChecked && result.preferencesOverwritten != null) {
-                                add(context.getString(R.string.toast_restore_part_prefs, result.preferencesOverwritten))
-                            }
-                        }
-                        context.toastShort(context.getString(R.string.toast_local_restore_success, parts.joinToString("，")))
-                        if (historyChecked) {
-                            // 浏览记录恢复后刷新历史列表:mark 双 tab 信号,当前 tab 经全局事件
-                            // 立即刷;两 tab 都不在组合中时各自重组补刷。
-                            // NonCancellable 内执行:恢复期间离开本页 scope 已取消,
-                            // emitGlobalEvent 的 launch 不再吞掉(与 HistoryPage 导入先例对齐)
-                            withContext(NonCancellable) {
-                                HistoryListRefreshSignal.mark()
-                                emitGlobalEvent(HistoryListUiEvent.Imported)
-                            }
-                        }
+                readBackupFile(context, uri)
+                    .onSuccess { parsed ->
+                        // 校验通过才进勾选弹窗:每次重置为全选(spec:默认全选)
+                        validatedBackup = parsed
+                        restoreHistory = true
+                        restoreBlockRules = true
+                        restorePreferences = true
+                        restoreDialogState.show()
                     }
                     .onFailure { e ->
+                        // 坏文件/高版本/读失败:当场提示,零写入,不弹勾选
                         context.toastShort(
                             context.getString(R.string.toast_local_restore_failed, e.toLocalRestoreMessage(context))
                         )
                     }
-                restoring = false
+                validating = false
             }
         }
     }
@@ -187,6 +180,54 @@ fun LocalBackupPage(
         pendingBackup = true
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         exportLauncher.launch("tblite_backup_$timestamp.json")
+    }
+
+    fun onRestoreConfirmed() {
+        // 弹窗确认按钮不受页面按钮的 enabled 互斥约束,双击可在 dismiss 生效前进入两次
+        if (restoring || backingUp) return
+        val backup = validatedBackup ?: return
+        val historyChecked = restoreHistory
+        val blockRulesChecked = restoreBlockRules
+        val preferencesChecked = restorePreferences
+        // 零勾选的"恢复"只会白做;不出弹窗内确认
+        if (!historyChecked && !blockRulesChecked && !preferencesChecked) {
+            context.toastShort(R.string.toast_restore_nothing_selected)
+            return
+        }
+        restoring = true
+        coroutineScope.launch {
+            restoreFromBackup(context, backup, historyChecked, blockRulesChecked, preferencesChecked)
+                .onSuccess { result ->
+                    val parts = buildList {
+                        if (historyChecked && result.history != null) {
+                            add(context.getString(R.string.toast_restore_part_history, result.history.added, result.history.skipped))
+                        }
+                        if (blockRulesChecked && result.blockRules != null) {
+                            add(context.getString(R.string.toast_restore_part_rules, result.blockRules.added, result.blockRules.skipped))
+                        }
+                        if (preferencesChecked && result.preferencesOverwritten != null) {
+                            add(context.getString(R.string.toast_restore_part_prefs, result.preferencesOverwritten))
+                        }
+                    }
+                    context.toastShort(context.getString(R.string.toast_local_restore_success, parts.joinToString("，")))
+                    if (historyChecked) {
+                        // 浏览记录恢复后刷新历史列表:mark 双 tab 信号,当前 tab 经全局事件
+                        // 立即刷;两 tab 都不在组合中时各自重组补刷。
+                        // NonCancellable 内执行:恢复期间离开本页 scope 已取消,
+                        // emitGlobalEvent 的 launch 不再吞掉(与 HistoryPage 导入先例对齐)
+                        withContext(NonCancellable) {
+                            HistoryListRefreshSignal.mark()
+                            emitGlobalEvent(HistoryListUiEvent.Imported)
+                        }
+                    }
+                }
+                .onFailure { e ->
+                    context.toastShort(
+                        context.getString(R.string.toast_local_restore_failed, e.toLocalRestoreMessage(context))
+                    )
+                }
+            restoring = false
+        }
     }
 
     MyScaffold(
@@ -216,8 +257,8 @@ fun LocalBackupPage(
             ActionCard {
                 Button(
                     onClick = { backupConfirmDialogState.show() },
-                    // 两个操作互斥:任一进行中另一个禁点(防并发写 DataStore/数据库)
-                    enabled = !backingUp && !restoring,
+                    // 三个操作互斥:任一进行中其余禁点(防并发写 DataStore/数据库)
+                    enabled = !backingUp && !restoring && !validating,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (backingUp) {
@@ -228,16 +269,13 @@ fun LocalBackupPage(
                 }
                 Button(
                     onClick = {
-                        // 每次打开重置为全选(spec:勾选界面默认全选)
-                        restoreHistory = true
-                        restoreBlockRules = true
-                        restorePreferences = true
-                        restoreDialogState.show()
+                        // 流程第一步:SAF 选文件(校验通过后才弹勾选弹窗)
+                        importLauncher.launch(arrayOf("application/json"))
                     },
-                    enabled = !backingUp && !restoring,
+                    enabled = !backingUp && !restoring && !validating,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    if (restoring) {
+                    if (validating || restoring) {
                         ButtonProgressIndicator()
                     } else {
                         Text(text = stringResource(id = R.string.btn_backup_restore))
@@ -257,20 +295,10 @@ fun LocalBackupPage(
         Text(text = stringResource(id = R.string.backup_confirm_dialog_message))
     }
 
-    // 恢复勾选对话框(spec:先弹三部分勾选界面,默认全选,确认后进 SAF 选文件)
+    // 恢复勾选对话框(在文件校验通过后弹出;确认后按勾选恢复内存中的已校验备份)
     ConfirmDialog(
         dialogState = restoreDialogState,
-        onConfirm = {
-            val historyChecked = restoreHistory
-            val blockRulesChecked = restoreBlockRules
-            val preferencesChecked = restorePreferences
-            // 零勾选的"恢复"只会白选一次文件;直接不出弹窗内确认
-            if (!historyChecked && !blockRulesChecked && !preferencesChecked) {
-                context.toastShort(R.string.toast_restore_nothing_selected)
-            } else {
-                importLauncher.launch(arrayOf("application/json"))
-            }
-        },
+        onConfirm = ::onRestoreConfirmed,
         title = { Text(text = stringResource(id = R.string.restore_dialog_title)) },
     ) {
         Column {
@@ -313,30 +341,42 @@ private suspend fun exportBackup(context: Context, uri: Uri): Result<LocalBackup
     }
 
 /**
- * 从 [uri] 读取备份 JSON 按勾选恢复:SAF 流解开成流后委托共享编排
- * (经 [LocalBackupTransfer.importFrom])。IO 线程执行;NonCancellable:恢复先解析
- * 后写入,中途取消会留下部分写入的脏状态(spec 恢复零写入/整体完成的语义)。
+ * 流程第二步:读取 [uri] 并校验为备份文件([LocalBackupTransfer.readBackup],
+ * 仅结构/版本守卫,零写入)。IO 线程执行;不必 NonCancellable——此步只读不写,
+ * 校验中断无脏状态,下次重选文件即可。
  */
-private suspend fun importBackup(
+private suspend fun readBackupFile(context: Context, uri: Uri): Result<BackupJson.ParsedBackup> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                LocalBackupTransfer.readBackup(stream)
+            } ?: throw IllegalStateException("cannot open input stream")
+        }
+    }
+
+/**
+ * 流程最后一步:把校验通过的 [backup] 按勾选交共享编排恢复。此步不读文件
+ * (ParsedBackup 已在内存);NonCancellable:恢复先解析后写入,中途取消会留下
+ * 部分写入的脏状态(spec 恢复零写入/整体完成的语义)。
+ */
+private suspend fun restoreFromBackup(
     context: Context,
-    uri: Uri,
+    backup: BackupJson.ParsedBackup,
     restoreHistory: Boolean,
     restoreBlockRules: Boolean,
     restorePreferences: Boolean,
 ): Result<BackupRestore.RestoreResult> =
-    withContext(Dispatchers.IO + NonCancellable) {
+    withContext(NonCancellable) {
         runCatching {
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                LocalBackupTransfer.importFrom(
-                    stream,
-                    restoreHistory,
-                    restoreBlockRules,
-                    restorePreferences,
-                    DatabaseHistoryStore,
-                    DatabaseBlockStore,
-                    context.dataStore,
-                )
-            } ?: throw IllegalStateException("cannot open input stream")
+            BackupRestore.restore(
+                backup,
+                restoreHistory,
+                restoreBlockRules,
+                restorePreferences,
+                DatabaseHistoryStore,
+                DatabaseBlockStore,
+                context.dataStore,
+            )
         }
     }
 

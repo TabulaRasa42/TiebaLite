@@ -68,15 +68,16 @@ class LocalBackupTransferTest {
         val blockStore = InMemoryBlockStore()
         val dataStore = InMemoryDataStore()
 
+        /** UI 新流程的测试镜像:readBackup(校验)→ BackupRestore.restore(按勾选恢复) */
         suspend fun importFrom(
             bytes: ByteArray,
             restoreHistory: Boolean = true,
             restoreBlockRules: Boolean = true,
             restorePreferences: Boolean = true,
         ): BackupRestore.RestoreResult {
-            val input = ByteArrayInputStream(bytes)
-            return LocalBackupTransfer.importFrom(
-                input, restoreHistory, restoreBlockRules, restorePreferences,
+            val parsed = LocalBackupTransfer.readBackup(ByteArrayInputStream(bytes))
+            return BackupRestore.restore(
+                parsed, restoreHistory, restoreBlockRules, restorePreferences,
                 historyStore, blockStore, dataStore,
             )
         }
@@ -313,6 +314,39 @@ class LocalBackupTransferTest {
         }
 
         assertTrue(f.historyStore.rows.isEmpty())
+    }
+
+    // ── 校验步(readBackup):选文件后、勾选前 ─────────────────
+
+    @Test
+    fun `readBackup通过合法备份返回解析结果`() = runBlocking {
+        val parsed = LocalBackupTransfer.readBackup(ByteArrayInputStream(exportedBytes()))
+
+        assertEquals(BackupJson.CURRENT_VERSION, parsed.version)
+        assertTrue(parsed.hasHistory)
+        assertTrue(parsed.hasBlockRules)
+        assertTrue(parsed.hasPreferences)
+    }
+
+    @Test
+    fun `readBackup坏文件当场拒绝且零写入`() = runBlocking {
+        val f = Fixture()
+
+        assertFailsWith<BackupFormatException> {
+            LocalBackupTransfer.readBackup(ByteArrayInputStream("not json".toByteArray(Charsets.UTF_8)))
+        }
+        assertFailsWith<BackupVersionException> {
+            LocalBackupTransfer.readBackup(
+                ByteArrayInputStream(
+                    """{"version": ${BackupJson.CURRENT_VERSION + 1}, "history": {"records": []}}"""
+                        .toByteArray(Charsets.UTF_8)
+                )
+            )
+        }
+
+        // 校验步只读不写:失败后存储侧零痕迹
+        assertTrue(f.historyStore.rows.isEmpty())
+        assertTrue(f.blockStore.rows.isEmpty())
     }
 
     // ── 往返:导出再导入还原 ──────────────────────────────────
