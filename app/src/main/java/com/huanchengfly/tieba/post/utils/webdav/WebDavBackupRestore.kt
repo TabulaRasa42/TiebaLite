@@ -2,13 +2,12 @@ package com.huanchengfly.tieba.post.utils.webdav
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.edit
 import com.huanchengfly.tieba.post.models.database.Block
 import com.huanchengfly.tieba.post.models.database.History
 import com.huanchengfly.tieba.post.utils.backup.BackupMerge
+import com.huanchengfly.tieba.post.utils.backup.BackupRestore
 import com.huanchengfly.tieba.post.utils.backup.BlockStore
 import com.huanchengfly.tieba.post.utils.backup.HistoryStore
-import com.huanchengfly.tieba.post.utils.backup.MergeResult
 
 /**
  * 备份打包上传 / 下载恢复分发(02 号票):复用 [BackupJson] 打包、[BackupMerge] 判重合并
@@ -16,13 +15,16 @@ import com.huanchengfly.tieba.post.utils.backup.MergeResult
  *
  * 上传/下载经 [WebDavClient] 接口;测试用 fake client / 内存 DataStore,不强依赖 OkHttp 实现。
  *
+ * 恢复编排(版本守卫、先解析后写入、合并/覆盖、结果汇总)01 号票上提到
+ * [BackupRestore],本类按介质只保留"下载 → 交编排"的 WebDAV 职责,恢复语义与本地侧单一来源。
+ *
  * 异常面:
  * - [BackupVersionException] 备份版本高于 [BackupJson.CURRENT_VERSION],整体拒绝、零写入;
  * - [BackupFormatException] 文件损坏或不是备份文件;
  * - [WebDavException] 四态(Network/Auth/Http/InvalidPath)直通,由 UI 层(05 号票)按类提示;
  * - 远端无备份文件抛 [WebDavException.Http](404),由上层提示"还没有备份"。
  *
- * DataStore 写入经 [preferencesDataStore] seam:生产绑定 Context.dataStore,
+ * DataStore 写入经注入的 DataStore<Preferences> seam:生产绑定 Context.dataStore,
  * 测试注入内存实现(真文件实现在 Windows JVM 二次写必败,见 03 号票记录)。
  */
 class WebDavBackupRestore(
@@ -31,13 +33,6 @@ class WebDavBackupRestore(
     private val blockStore: BlockStore,
     private val preferencesDataStore: DataStore<Preferences>,
 ) {
-
-    /** 恢复结果:三部分各自数量;未勾选部分为 null(完全未触碰) */
-    data class RestoreResult(
-        val history: MergeResult? = null,
-        val blockRules: MergeResult? = null,
-        val preferencesOverwritten: Int? = null,
-    )
 
     /**
      * 打包三部分数据并上传到远程路径下的固定文件名(整体覆盖)。
@@ -75,71 +70,25 @@ class WebDavBackupRestore(
     }
 
     /**
-     * 恢复分发:版本守卫在最前,version 高于本机支持版本整体抛 [BackupVersionException],
-     * 零写入。勾选部分按语义写入:浏览记录/屏蔽规则判重合并(与本地导入一致),
-     * 设置按键覆盖(本地独有键不动,排除清单键防御性再滤一遍)。
-     *
-     * 写入前先把所有勾选段完整解析:解析在版本守卫之后、任何写入之前完成,
-     * 损坏段抛 [BackupFormatException] 时三部分零写入(与版本拒绝同一整体拒绝语义)。
-     * 勾选段在备份中整体缺失(旧版本/被截断的备份)同样抛 [BackupFormatException]——
-     * "备份里没有这一段"不是可静默的空恢复。
-     *
-     * 写入阶段各部分独立成段:浏览记录/屏蔽规则各自在自己的合并事务内原子(06 号票),
-     * 设置经 DataStore 自身原子;跨部分无整体事务,后者失败时已提交部分保留——
-     * 判重合并幂等,重跑恢复即可补齐,失败提示如实报错。
+     * 恢复分发:委托共享编排 [BackupRestore.restore](01 号票上提)。
+     * WebDAV 侧只补充下载得到的 [BackupJson.ParsedBackup] 与本类持有的 store/DataStore,
+     * 版本守卫、先解析后写入、判重合并/按键覆盖的语义全部在共享层单一来源。
      */
     suspend fun restore(
         backup: BackupJson.ParsedBackup,
         restoreHistory: Boolean,
         restoreBlockRules: Boolean,
         restorePreferences: Boolean,
-    ): RestoreResult {
-        if (backup.version > BackupJson.CURRENT_VERSION) {
-            throw BackupVersionException(backup.version, BackupJson.CURRENT_VERSION)
-        }
-
-        // 解析阶段:全部完成后才进入写入阶段(先解析后写入,避免半途解析失败留下部分写入)
-        val historyRecords = if (restoreHistory) {
-            if (!backup.hasHistory) {
-                throw BackupFormatException("backup file has no history section")
-            }
-            backup.historyRecords()
-        } else {
-            emptyList()
-        }
-        val blockRules = if (restoreBlockRules) {
-            if (!backup.hasBlockRules) {
-                throw BackupFormatException("backup file has no blockRules section")
-            }
-            backup.blockRules()
-        } else {
-            emptyList()
-        }
-        val preferenceEntries = if (restorePreferences) {
-            if (!backup.hasPreferences) {
-                throw BackupFormatException("backup file has no preferences section")
-            }
-            backup.preferenceEntries()
-        } else {
-            emptyList()
-        }
-
-        // 写入阶段
-        val history = if (restoreHistory) BackupMerge.mergeHistories(historyRecords, historyStore) else null
-        val blockRulesResult = if (restoreBlockRules) BackupMerge.mergeBlockRules(blockRules, blockStore) else null
-        var preferencesOverwritten: Int? = null
-        if (restorePreferences) {
-            preferencesDataStore.edit { prefs ->
-                preferenceEntries.forEach { (key, value) ->
-                    @Suppress("UNCHECKED_CAST")
-                    (key as Preferences.Key<Any>).let { prefs[it] = value }
-                }
-            }
-            preferencesOverwritten = preferenceEntries.size
-        }
-
-        return RestoreResult(history, blockRulesResult, preferencesOverwritten)
-    }
+    ): BackupRestore.RestoreResult =
+        BackupRestore.restore(
+            backup,
+            restoreHistory,
+            restoreBlockRules,
+            restorePreferences,
+            historyStore,
+            blockStore,
+            preferencesDataStore,
+        )
 
     /** 远程目录路径归一化:统一带尾斜杠(文件路径 = 目录 + 固定文件名) */
     private fun remoteDirectory(remotePath: String): String =

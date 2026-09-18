@@ -627,4 +627,15 @@
     <string name="restore_part_history">浏览记录</string>
     <string name="restore_part_block_rules">屏蔽规则</string>
     <string name="restore_part_preferences">软件设置（覆盖本机同名设置）</string>
+
+    <string name="title_local_backup">本地备份</string>
+    <string name="summary_local_backup">备份到本地文件，无需配置网盘</string>
+    <string name="backup_confirm_dialog_title">立即备份</string>
+    <string name="backup_confirm_dialog_message">将覆盖备份中的软件设置（浏览记录与屏蔽规则仍完整保留），确定继续吗？</string>
+    <string name="toast_local_backup_success">已备份：浏览记录 %1$d 条、屏蔽规则 %2$d 条、软件设置 %3$d 项</string>
+    <string name="toast_local_backup_failed">备份失败：%1$s</string>
+    <string name="toast_local_restore_success">恢复成功：%1$s</string>
+    <string name="toast_local_restore_failed">恢复失败：%1$s</string>
+    <string name="toast_local_restore_reason_corrupted">所选文件损坏或不是本应用生成的备份</string>
+    <string name="toast_local_restore_reason_io">读取所选文件失败，请重试或另选文件</string>
 </resources>
