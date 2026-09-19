@@ -13,12 +13,13 @@ import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
 import com.huanchengfly.tieba.post.models.database.Block
-import com.huanchengfly.tieba.post.models.database.Block.Companion.getKeywords
 import com.huanchengfly.tieba.post.models.database.History
-import com.huanchengfly.tieba.post.utils.BlockRuleData
 import com.huanchengfly.tieba.post.utils.GsonUtil
-import com.huanchengfly.tieba.post.utils.HistoryRecordData
 import com.huanchengfly.tieba.post.utils.ThemeUtil
+import com.huanchengfly.tieba.post.utils.backup.BlockRuleData
+import com.huanchengfly.tieba.post.utils.backup.HistoryRecordData
+import com.huanchengfly.tieba.post.utils.backup.toBlockRuleData
+import com.huanchengfly.tieba.post.utils.backup.toHistoryRecordData
 
 /**
  * 备份文件(术语见 CONTEXT.md)的打包与解析:单个 JSON、固定文件名 [FILE_NAME],
@@ -35,9 +36,8 @@ import com.huanchengfly.tieba.post.utils.ThemeUtil
  * }
  * ```
  *
- * 浏览记录/屏蔽规则条目复用 [HistorySerializer]/[BlockRuleSerializer] 的数据格式
- * (与本地导入导出文件逐条一致);软件设置键值带类型标签,恢复时按标签还原
- * Preferences.Key 与值。
+ * 浏览记录/屏蔽规则条目复用 [HistoryRecordData]/[BlockRuleData] 的数据格式;
+ * 软件设置键值带类型标签,恢复时按标签还原 Preferences.Key 与值。
  *
  * 软件设置经 [EXCLUDED_PREFERENCE_KEYS] 双侧过滤:打包侧不导出设备特定键,
  * 恢复侧再滤一遍(防御旧版本/手构备份把设备特定键写回本机)。
@@ -111,34 +111,14 @@ object BackupJson {
      *   无需再 parse 一遍整个文件
      */
     fun serialize(histories: List<History>, blocks: List<Block>, preferences: Preferences): SerializedBackup {
-        // 条目格式复用现有 serializer 的数据类型(HistoryRecordData/BlockRuleData,
-        // 与本地导入导出文件逐条一致),直接构建 JsonArray,不经字符串序列化往返
+        // 条目格式即 HistoryRecordData/BlockRuleData 的 Gson 形态(本地备份与
+        // WebDAV 备份同一份数据结构),直接构建 JsonArray,不经字符串序列化往返
         val gson = GsonUtil.getGson()
         val historyRecords = JsonArray().apply {
-            histories.map {
-                HistoryRecordData(
-                    title = it.title,
-                    data = it.data,
-                    type = it.type,
-                    timestamp = it.timestamp,
-                    count = it.count,
-                    extras = it.extras,
-                    avatar = it.avatar,
-                    username = it.username
-                )
-            }.forEach { add(gson.toJsonTree(it)) }
+            histories.map { it.toHistoryRecordData() }.forEach { add(gson.toJsonTree(it)) }
         }
         val blockRules = JsonArray().apply {
-            blocks.map {
-                BlockRuleData(
-                    category = it.category,
-                    type = it.type,
-                    keywords = it.getKeywords(),
-                    username = it.username,
-                    uid = it.uid,
-                    isRegex = it.isRegex
-                )
-            }.forEach { add(gson.toJsonTree(it)) }
+            blocks.map { it.toBlockRuleData() }.forEach { add(gson.toJsonTree(it)) }
         }
 
         val preferencesJson = preferenceEntriesToJson(preferences)
@@ -199,11 +179,16 @@ object BackupJson {
             val records = (root.get(FIELD_HISTORY) as? JsonObject)
                 ?.get(FIELD_RECORDS) as? JsonArray
                 ?: return emptyList()
-            // 逐条防御:损坏条目(Gson 反序列化失败/缺字段注入 null 触发异常)跳过,
-            // 不因单个坏记录中断整体恢复
+            // 逐条防御:损坏条目跳过,不因单个坏记录中断整体恢复。
+            // 两类坏条目:类型不符 Gson 反序列化抛 RuntimeException;缺/显式 null 的
+            // title/data 不抛——HistoryRecordData 无无参构造,Gson 走 Unsafe 实例化,
+            // 非空 Kotlin 字段被静默注成 null(绕过语言检查),不在此拦下就会拖到
+            // 恢复入库构建 History 时才 NPE,恢复中途夭折留下部分写入。
             return records.mapNotNull { element ->
                 try {
-                    GsonUtil.getGson().fromJson(element, HistoryRecordData::class.java)
+                    GsonUtil.getGson().fromJson(element, HistoryRecordData::class.java)?.takeIf {
+                        it.title != null && it.data != null
+                    }
                 } catch (_: RuntimeException) {
                     null
                 }

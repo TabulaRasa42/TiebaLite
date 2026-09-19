@@ -1,11 +1,9 @@
 package com.huanchengfly.tieba.post.utils.backup
 
 import com.huanchengfly.tieba.post.models.database.Block
-import com.huanchengfly.tieba.post.models.database.History
 import com.huanchengfly.tieba.post.models.database.Block.Companion.getKeywords
+import com.huanchengfly.tieba.post.models.database.History
 import com.huanchengfly.tieba.post.toJson
-import com.huanchengfly.tieba.post.utils.BlockRuleData
-import com.huanchengfly.tieba.post.utils.HistoryRecordData
 
 /**
  * 备份/导入共用的数据写入 seam:判重合并逻辑([mergeHistories]/[mergeBlockRules])
@@ -39,8 +37,7 @@ data class MergeResult(val added: Int, val skipped: Int)
 
 /**
  * 浏览记录 + 屏蔽规则"合并 + 判重"的单一来源:
- * WebDAV 备份恢复与本地文件导入(BlockRuleTransfer/HistoryTransfer.importFrom)
- * 共用同一份实现,保证判重行为字面一致(spec 决策)。
+ * WebDAV 备份恢复与本地备份恢复共用同一份实现,保证判重行为字面一致(spec 决策)。
  */
 object BackupMerge {
 
@@ -65,18 +62,7 @@ object BackupMerge {
                 } else {
                     // 直接插入原始记录,保留原 timestamp/count;不去重键复用 upsert
                     // (upsert 会把 timestamp 重置为现在、count+1,会污染排序)
-                    store.insertRaw(
-                        History(
-                            title = record.title,
-                            data = record.data,
-                            type = record.type,
-                            timestamp = record.timestamp,
-                            count = record.count,
-                            extras = record.extras,
-                            avatar = record.avatar,
-                            username = record.username
-                        )
-                    )
+                    store.insertRaw(record.toHistory())
                     existingKeys.add(key)
                     added++
                 }

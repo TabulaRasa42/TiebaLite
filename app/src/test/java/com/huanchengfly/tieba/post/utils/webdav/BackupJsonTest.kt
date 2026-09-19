@@ -11,7 +11,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import com.huanchengfly.tieba.post.models.database.Block
 import com.huanchengfly.tieba.post.models.database.History
-import com.huanchengfly.tieba.post.utils.HistorySerializer
+import com.huanchengfly.tieba.post.utils.backup.HistoryRecordData
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -76,15 +76,29 @@ class BackupJsonTest {
     }
 
     @Test
-    fun `打包条目格式与本地导入导出serializer的records一致`() {
-        // 备份嵌套的 records 与 HistorySerializer 独立导出的 records 逐条一致
-        val histories = sampleHistories()
+    fun `打包条目格式与HistoryRecordData字段往返一致`() {
+        // history 段条目即 HistoryRecordData 的 Gson 形态:打包再解析逐条还原输入
+        val histories = listOf(
+            History(title = "帖子A", data = "1001", type = 0, timestamp = 1694659200000, count = 1,
+                extras = "x", avatar = "a", username = "user"),
+            History(title = "吧B", data = "lol", type = 1, timestamp = 1694659300000, count = 2),
+        )
         val backupJson = BackupJson.serialize(histories, emptyList(), emptyPreferences()).json
-        val standaloneJson = HistorySerializer.serialize(histories)
 
-        val backupRecords = BackupJson.parse(backupJson).historyRecords()
-        val standaloneRecords = HistorySerializer.deserialize(standaloneJson)
-        assertEquals(standaloneRecords, backupRecords)
+        val records = BackupJson.parse(backupJson).historyRecords()
+
+        assertEquals(
+            listOf(
+                HistoryRecordData(
+                    title = "帖子A", data = "1001", type = 0, timestamp = 1694659200000, count = 1,
+                    extras = "x", avatar = "a", username = "user"
+                ),
+                HistoryRecordData(
+                    title = "吧B", data = "lol", type = 1, timestamp = 1694659300000, count = 2
+                ),
+            ),
+            records
+        )
     }
 
     // ── 排除清单 ──────────────────────────────────────────────
@@ -272,5 +286,31 @@ class BackupJsonTest {
 
         assertEquals(1, records.size)
         assertEquals("好", records[0].title)
+    }
+
+    @Test
+    fun `缺必填字段的条目被Gson注入null时跳过不抛异常`() {
+        // HistoryRecordData 无无参构造,Gson 对缺 title/data 的条目走 Unsafe 实例化,
+        // 非空 Kotlin 字段被静默注成 null(不抛异常)——不拦下会拖到恢复入库时才 NPE。
+        // 解析侧必须当场把此类条目跳过。
+        val backupJson = """
+            {
+              "version": 1,
+              "history": {"records": [
+                {"title": "缺data", "type": 0, "timestamp": 1, "count": 1},
+                {"title": "好", "data": "1002", "type": 0, "timestamp": 1, "count": 1}
+              ]},
+              "blockRules": {"rules": [
+                {"category": 10, "keywords": ["正常"]}
+              ]}
+            }
+        """.trimIndent()
+
+        val parsed = BackupJson.parse(backupJson)
+
+        assertEquals(1, parsed.historyRecords().size)
+        assertEquals("好", parsed.historyRecords()[0].title)
+        assertEquals(1, parsed.blockRules().size)
+        assertEquals(listOf("正常"), parsed.blockRules()[0].keywords)
     }
 }

@@ -282,7 +282,6 @@ class WebDavBackupRestoreTest {
 
         // 入库规则 username=""(orEmpty 归一),手构"导出形态"等价规则 username=null:
         // 归一化后判重必须命中,否则 null-username 规则每次恢复都重复入库
-        // (与 BlockRuleTransfer.importFrom 行为一致)
         val equivalent = BackupJson.parse(
             """
             {"version": 1,

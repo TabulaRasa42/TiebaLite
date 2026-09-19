@@ -1,8 +1,6 @@
 package com.huanchengfly.tieba.post.utils.backup
 
 import com.huanchengfly.tieba.post.models.database.Block
-import com.huanchengfly.tieba.post.utils.BlockRuleData
-import com.huanchengfly.tieba.post.utils.HistoryRecordData
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
