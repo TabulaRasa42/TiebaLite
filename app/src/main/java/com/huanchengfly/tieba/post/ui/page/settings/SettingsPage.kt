@@ -11,7 +11,6 @@ import androidx.compose.material.Scaffold
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
@@ -214,7 +213,7 @@ fun SettingsPage(
                         leadingIcon = {
                             LeadingIcon {
                                 AvatarIcon(
-                                    icon = Icons.Outlined.Backup,
+                                    icon = ImageVector.vectorResource(id = R.drawable.ic_settings_backup),
                                     size = Sizes.Small,
                                     contentDescription = null,
                                 )

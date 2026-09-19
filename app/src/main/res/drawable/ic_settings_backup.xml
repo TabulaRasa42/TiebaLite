@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+    设置页"备份与恢复"入口图标(02 号票真机反馈):自绘对齐原作者设置图标风格——
+    多 path 双色分层(主体 #FF000000、辅块 #77000000,经 tint 染色呈深浅两档,
+    同 ic_settings_block/ic_dashboard_customize)。图形为托盘+落入箭头(Material backup),
+    与 WebDAV 子入口的 CloudUpload(云+上箭头)区分。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:fillColor="#FF000000"
+      android:pathData="M19,9h-4V3H9v6H5l7,7,7,-7z"/>
+  <path
+      android:fillColor="#77000000"
+      android:pathData="M5,18v2h14v-2H5z"/>
+</vector>
