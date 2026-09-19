@@ -100,7 +100,7 @@ fun AboutPage(
                         contentColor = ExtendedTheme.colors.text
                     ),
                     onClick = {
-                        launchUrl(context, navigator, "https://github.com/zzc10086/TiebaLite")
+                        launchUrl(context, navigator, "https://github.com/TabulaRasa42/TiebaLite")
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
