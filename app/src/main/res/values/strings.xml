@@ -583,8 +583,10 @@
     <string name="pull_to_load_latest_posts">继续上拉加载最新回复</string>
     <string name="settings_home_page_show_history_forum">首页显示最近逛的吧</string>
     <string name="title_settings_backup">备份与恢复</string>
-    <string name="summary_settings_backup">通过 WebDAV 备份数据到你的网盘</string>
-    <string name="title_backup_settings">备份与恢复</string>
+    <string name="summary_settings_backup">本地文件与 WebDAV 网盘备份</string>
+    <string name="title_backup_hub">备份与恢复</string>
+    <string name="title_webdav_backup">WebDAV 备份</string>
+    <string name="summary_webdav_backup">备份到你的 WebDAV 网盘</string>
     <string name="backup_section_config">WebDAV 配置</string>
     <string name="backup_section_actions">数据操作</string>
     <string name="backup_hint_jianguoyun">坚果云请使用「应用密码」登录（网页端 → 安全选项 → 添加应用密码），而非账户密码</string>
@@ -631,11 +633,14 @@
     <string name="title_local_backup">本地备份</string>
     <string name="summary_local_backup">备份到本地文件，无需配置网盘</string>
     <string name="backup_confirm_dialog_title">立即备份</string>
-    <string name="backup_confirm_dialog_message">将覆盖备份中的软件设置（浏览记录与屏蔽规则仍完整保留），确定继续吗？</string>
+    <string name="backup_confirm_dialog_message">将把浏览记录、屏蔽规则与软件设置打包写入备份文件，其中软件设置以本次数据为准，确定继续吗？</string>
+    <string name="backup_confirm_dialog_message_local">将把浏览记录、屏蔽规则与软件设置打包写入一个新的本地备份文件，确定继续吗？</string>
     <string name="toast_local_backup_success">已备份：浏览记录 %1$d 条、屏蔽规则 %2$d 条、软件设置 %3$d 项</string>
     <string name="toast_local_backup_failed">备份失败：%1$s</string>
+    <string name="toast_local_backup_reason_io">写入备份文件失败，请重试或另选保存位置</string>
     <string name="toast_local_restore_success">恢复成功：%1$s</string>
     <string name="toast_local_restore_failed">恢复失败：%1$s</string>
     <string name="toast_local_restore_reason_corrupted">所选文件损坏或不是本应用生成的备份</string>
     <string name="toast_local_restore_reason_io">读取所选文件失败，请重试或另选文件</string>
+    <string name="toast_local_restore_state_reset">页面状态已重置，请重新选择备份文件</string>
 </resources>

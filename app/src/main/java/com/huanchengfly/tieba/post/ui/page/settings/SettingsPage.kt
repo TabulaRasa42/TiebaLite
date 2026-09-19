@@ -11,8 +11,7 @@ import androidx.compose.material.Scaffold
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.outlined.CloudSync
-import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
@@ -32,12 +31,11 @@ import com.huanchengfly.tieba.post.ui.common.theme.compose.ExtendedTheme
 import com.huanchengfly.tieba.post.ui.page.LocalNavigator
 import com.huanchengfly.tieba.post.ui.page.ProvideNavigator
 import com.huanchengfly.tieba.post.ui.page.destinations.AccountManagePageDestination
-import com.huanchengfly.tieba.post.ui.page.destinations.BackupSettingsPageDestination
+import com.huanchengfly.tieba.post.ui.page.destinations.BackupHubPageDestination
 import com.huanchengfly.tieba.post.ui.page.destinations.BlockSettingsPageDestination
 import com.huanchengfly.tieba.post.ui.page.destinations.CustomSettingsPageDestination
 import com.huanchengfly.tieba.post.ui.page.destinations.HabitSettingsPageDestination
 import com.huanchengfly.tieba.post.ui.page.destinations.LoginPageDestination
-import com.huanchengfly.tieba.post.ui.page.destinations.LocalBackupPageDestination
 import com.huanchengfly.tieba.post.ui.page.destinations.MoreSettingsPageDestination
 import com.huanchengfly.tieba.post.ui.page.destinations.OKSignSettingsPageDestination
 import com.huanchengfly.tieba.post.ui.widgets.compose.Avatar
@@ -216,7 +214,7 @@ fun SettingsPage(
                         leadingIcon = {
                             LeadingIcon {
                                 AvatarIcon(
-                                    icon = Icons.Outlined.CloudSync,
+                                    icon = Icons.Outlined.Backup,
                                     size = Sizes.Small,
                                     contentDescription = null,
                                 )
@@ -224,28 +222,7 @@ fun SettingsPage(
                         },
                         darkenOnDisable = false,
                         onClick = {
-                            navigator.navigate(BackupSettingsPageDestination)
-                        }
-                    )
-                }
-                // 临时入口脚手架(01 号票):本地备份页在中枢页(02 号票)落地前的可达入口,
-                // 02 落地时随中枢页一并删除
-                prefsItem {
-                    TextPref(
-                        title = stringResource(id = R.string.title_local_backup),
-                        summary = stringResource(id = R.string.summary_local_backup),
-                        leadingIcon = {
-                            LeadingIcon {
-                                AvatarIcon(
-                                    icon = Icons.Outlined.Save,
-                                    size = Sizes.Small,
-                                    contentDescription = null,
-                                )
-                            }
-                        },
-                        darkenOnDisable = false,
-                        onClick = {
-                            navigator.navigate(LocalBackupPageDestination)
+                            navigator.navigate(BackupHubPageDestination)
                         }
                     )
                 }

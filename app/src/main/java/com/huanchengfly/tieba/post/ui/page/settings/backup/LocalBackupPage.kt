@@ -4,24 +4,15 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.Checkbox
-import androidx.compose.material.CheckboxDefaults
-import androidx.compose.material.CircularProgressIndicator
-import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -31,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -42,13 +32,16 @@ import com.huanchengfly.tieba.post.R
 import com.huanchengfly.tieba.post.arch.emitGlobalEvent
 import com.huanchengfly.tieba.post.dataStore
 import com.huanchengfly.tieba.post.toastShort
-import com.huanchengfly.tieba.post.ui.common.theme.compose.ExtendedTheme
 import com.huanchengfly.tieba.post.ui.page.history.list.HistoryListRefreshSignal
 import com.huanchengfly.tieba.post.ui.page.history.list.HistoryListUiEvent
+import com.huanchengfly.tieba.post.ui.widgets.compose.ActionCard
 import com.huanchengfly.tieba.post.ui.widgets.compose.BackNavigationIcon
 import com.huanchengfly.tieba.post.ui.widgets.compose.Button
+import com.huanchengfly.tieba.post.ui.widgets.compose.ButtonProgressIndicator
+import com.huanchengfly.tieba.post.ui.widgets.compose.buildRestoreSummaryParts
 import com.huanchengfly.tieba.post.ui.widgets.compose.ConfirmDialog
 import com.huanchengfly.tieba.post.ui.widgets.compose.MyScaffold
+import com.huanchengfly.tieba.post.ui.widgets.compose.RestoreCheckboxRow
 import com.huanchengfly.tieba.post.ui.widgets.compose.TitleCentredToolbar
 import com.huanchengfly.tieba.post.ui.widgets.compose.rememberDialogState
 import com.huanchengfly.tieba.post.utils.DatabaseBlockStore
@@ -174,9 +167,10 @@ fun LocalBackupPage(
     }
 
     fun onBackupNow() {
-        // 弹窗确认按钮不受页面按钮的 enabled 互斥约束,双击可在 dismiss 生效前进入两次
-        // (沿 WebDAV 页 onRestoreConfirmed 的 restoring 守卫先例)
-        if (backingUp || restoring) return
+        // 弹窗确认按钮不受页面按钮的 enabled 互斥约束,双击可在 dismiss 生效前进入两次。
+        // 守卫须含 pendingBackup:backingUp 要到 SAF 回调才置位,双击间隔内仍为 false,
+        // pendingBackup 同步置位,挡住第二次 launch(防叠两个 SAF 选位器)
+        if (pendingBackup || backingUp || restoring) return
         pendingBackup = true
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         exportLauncher.launch("tblite_backup_$timestamp.json")
@@ -185,7 +179,12 @@ fun LocalBackupPage(
     fun onRestoreConfirmed() {
         // 弹窗确认按钮不受页面按钮的 enabled 互斥约束,双击可在 dismiss 生效前进入两次
         if (restoring || backingUp) return
-        val backup = validatedBackup ?: return
+        // validatedBackup 非 Saveable,旋转后为 null 而勾选弹窗会随 DialogState 复原重弹;
+        // 此处静默 return 会变成"点确认无任何反应",给明确提示引导重选文件
+        val backup = validatedBackup ?: run {
+            context.toastShort(R.string.toast_local_restore_state_reset)
+            return
+        }
         val historyChecked = restoreHistory
         val blockRulesChecked = restoreBlockRules
         val preferencesChecked = restorePreferences
@@ -198,18 +197,13 @@ fun LocalBackupPage(
         coroutineScope.launch {
             restoreFromBackup(context, backup, historyChecked, blockRulesChecked, preferencesChecked)
                 .onSuccess { result ->
-                    val parts = buildList {
-                        if (historyChecked && result.history != null) {
-                            add(context.getString(R.string.toast_restore_part_history, result.history.added, result.history.skipped))
-                        }
-                        if (blockRulesChecked && result.blockRules != null) {
-                            add(context.getString(R.string.toast_restore_part_rules, result.blockRules.added, result.blockRules.skipped))
-                        }
-                        if (preferencesChecked && result.preferencesOverwritten != null) {
-                            add(context.getString(R.string.toast_restore_part_prefs, result.preferencesOverwritten))
-                        }
-                    }
-                    context.toastShort(context.getString(R.string.toast_local_restore_success, parts.joinToString("，")))
+                    context.toastShort(context.getString(
+                        R.string.toast_local_restore_success,
+                        buildRestoreSummaryParts(
+                            context, result,
+                            historyChecked, blockRulesChecked, preferencesChecked,
+                        ).joinToString("，"),
+                    ))
                     if (historyChecked) {
                         // 浏览记录恢复后刷新历史列表:mark 双 tab 信号,当前 tab 经全局事件
                         // 立即刷;两 tab 都不在组合中时各自重组补刷。
@@ -286,13 +280,14 @@ fun LocalBackupPage(
         }
     }
 
-    // 备份确认弹窗(spec:先弹确认弹窗提示覆盖备份中的软件设置,确认才进 SAF 选位,取消零动作)
+    // 备份确认弹窗(spec:先弹确认弹窗,确认才进 SAF 选位,取消零动作;本地介质新建文件,
+    // 无"覆盖"语义,文案与 WebDAV 共用标题模板、内容各用各的)
     ConfirmDialog(
         dialogState = backupConfirmDialogState,
         onConfirm = ::onBackupNow,
         title = { Text(text = stringResource(id = R.string.backup_confirm_dialog_title)) },
     ) {
-        Text(text = stringResource(id = R.string.backup_confirm_dialog_message))
+        Text(text = stringResource(id = R.string.backup_confirm_dialog_message_local))
     }
 
     // 恢复勾选对话框(在文件校验通过后弹出;确认后按勾选恢复内存中的已校验备份)
@@ -382,7 +377,7 @@ private suspend fun restoreFromBackup(
 
 /** 本地备份失败提示映射:IO 与其余异常展示原始 message——版本守卫在导出侧不会触发(自产文件),仅防御性归一 */
 private fun Throwable.toLocalBackupMessage(context: Context): String = when (this) {
-    is IOException -> context.getString(R.string.toast_local_restore_reason_io)
+    is IOException -> context.getString(R.string.toast_local_backup_reason_io)
     else -> message ?: context.getString(R.string.toast_backup_reason_unknown)
 }
 
@@ -394,53 +389,4 @@ private fun Throwable.toLocalRestoreMessage(context: Context): String = when (th
     is BackupFormatException -> context.getString(R.string.toast_local_restore_reason_corrupted)
     is IOException -> context.getString(R.string.toast_local_restore_reason_io)
     else -> message ?: context.getString(R.string.toast_backup_reason_unknown)
-}
-
-/** 操作卡片容器:圆角表面,风格对齐项目卡片(ExtendedTheme.colors.card) */
-@Composable
-private fun ActionCard(content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                color = ExtendedTheme.colors.card,
-                shape = RoundedCornerShape(12.dp),
-            )
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        content()
-    }
-}
-
-/** 恢复勾选对话框的单行复选(与 WebDAV 页同款式) */
-@Composable
-private fun RestoreCheckboxRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .selectable(selected = checked, onClick = { onCheckedChange(!checked) }),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Checkbox(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colors.primary),
-        )
-        Text(text = label, style = MaterialTheme.typography.body1)
-    }
-}
-
-/** 按钮内转圈(进行中反馈:按钮内转圈 + 禁点) */
-@Composable
-private fun ButtonProgressIndicator() {
-    CircularProgressIndicator(
-        color = LocalContentColor.current,
-        strokeWidth = 2.dp,
-        modifier = Modifier.size(18.dp),
-    )
 }

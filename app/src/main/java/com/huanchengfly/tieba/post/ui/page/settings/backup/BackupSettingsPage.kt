@@ -1,7 +1,6 @@
 package com.huanchengfly.tieba.post.ui.page.settings.backup
 
 import android.content.Context
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,19 +9,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.Checkbox
-import androidx.compose.material.CheckboxDefaults
-import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
-import androidx.compose.material.LocalContentColor
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
@@ -38,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -56,10 +47,14 @@ import com.huanchengfly.tieba.post.toastShort
 import com.huanchengfly.tieba.post.ui.common.theme.compose.ExtendedTheme
 import com.huanchengfly.tieba.post.ui.page.history.list.HistoryListRefreshSignal
 import com.huanchengfly.tieba.post.ui.page.history.list.HistoryListUiEvent
+import com.huanchengfly.tieba.post.ui.widgets.compose.ActionCard
 import com.huanchengfly.tieba.post.ui.widgets.compose.BackNavigationIcon
 import com.huanchengfly.tieba.post.ui.widgets.compose.Button
+import com.huanchengfly.tieba.post.ui.widgets.compose.ButtonProgressIndicator
+import com.huanchengfly.tieba.post.ui.widgets.compose.buildRestoreSummaryParts
 import com.huanchengfly.tieba.post.ui.widgets.compose.ConfirmDialog
 import com.huanchengfly.tieba.post.ui.widgets.compose.MyScaffold
+import com.huanchengfly.tieba.post.ui.widgets.compose.RestoreCheckboxRow
 import com.huanchengfly.tieba.post.ui.widgets.compose.TextButton
 import com.huanchengfly.tieba.post.ui.widgets.compose.TitleCentredToolbar
 import com.huanchengfly.tieba.post.ui.widgets.compose.rememberDialogState
@@ -87,11 +82,11 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
 /**
- * WebDAV 备份配置页(04 号票):上半部分配置卡片(服务器地址/用户名/密码/远程路径),
+ * WebDAV 备份页(04 号票,02 号票降为中枢页二级):上半部分配置卡片(服务器地址/用户名/密码/远程路径),
  * "测试连接"(经 WebDavClient mkcol,远程目录不存在自动创建)与"保存配置"(经凭据模块持久化,
  * 进页回填);下半部分"立即备份"/"从备份恢复"(05 号票接线):备份收集三部分数据经
- * [WebDavBackupRestore.upload] 上传固定文件名;恢复先弹三部分勾选(默认全选),
- * 确认后经 [WebDavBackupRestore.restore] 分发写入。
+ * [WebDavBackupRestore.upload] 上传固定文件名,确认弹窗与本地备份共用同一文案模板;恢复先弹
+ * 三部分勾选(默认全选),确认后经 [WebDavBackupRestore.restore] 分发写入。
  *
  * 凭据一律取表单当前值([filledConfig]),表单完整才放行(测试连接/保存/备份/恢复四操作
  * 同一校验)——不做"表单缺项回退已保存凭据"的静默回退:那会让操作打到与界面显示不一致的
@@ -127,6 +122,10 @@ fun BackupSettingsPage(
     var backingUp by remember { mutableStateOf(false) }
     var restoring by remember { mutableStateOf(false) }
 
+    // 备份确认弹窗:确认后才上传(02 号票,与本地备份共用 backup_confirm_dialog_* 文案模板;
+    // 取消零上传)。确认后经 onBackupNow 执行,launcher 无 SAF 环节
+    val backupConfirmDialogState = rememberDialogState()
+
     // 恢复勾选状态:弹窗每次打开重置为全选(spec:默认全选,可取消勾选)
     val restoreDialogState = rememberDialogState()
     var restoreHistory by rememberSaveable { mutableStateOf(true) }
@@ -152,7 +151,10 @@ fun BackupSettingsPage(
                 remotePath = state.remotePath
                 context.toastShort(R.string.toast_backup_needs_password)
             }
-            WebDavCredentialsState.Empty -> Unit
+            WebDavCredentialsState.Empty -> {
+                // 无已保存配置:远程路径预填默认值(02 号票,已保存配置回显优先于预填)
+                remotePath = DEFAULT_REMOTE_PATH
+            }
         }
     }
 
@@ -224,6 +226,9 @@ fun BackupSettingsPage(
     }
 
     fun onBackupNow() {
+        // 弹窗确认按钮不受页面按钮的 enabled 互斥约束,双击可在 dismiss 生效前进入两次
+        // (沿 onRestoreConfirmed 的守卫先例;02 号票确认弹窗上线后此处成为唯一入口)
+        if (backingUp || restoring) return
         val config = filledConfig(requirePassword = true) ?: return
         backingUp = true
         coroutineScope.launch {
@@ -270,8 +275,9 @@ fun BackupSettingsPage(
     }
 
     fun onRestoreConfirmed() {
-        // 弹窗确认按钮不受页面按钮的 enabled 四态约束,双击可在 dismiss 生效前进入两次
-        if (restoring) return
+        // 弹窗确认按钮不受页面按钮的 enabled 四态约束,双击可在 dismiss 生效前进入两次;
+        // restoring 之外再守 backingUp:备份进行中确认恢复会并发写 DataStore/数据库
+        if (restoring || backingUp) return
         val restoreHistoryChecked = restoreHistory
         val restoreBlockRulesChecked = restoreBlockRules
         val restorePreferencesChecked = restorePreferences
@@ -299,24 +305,22 @@ fun BackupSettingsPage(
                     val backup = backupRestore.download(config.remotePath)
                     backupRestore.restore(backup, restoreHistoryChecked, restoreBlockRulesChecked, restorePreferencesChecked)
                 }
-                // 成功提示含各部分数量:仅列勾选部分(spec:恢复成功提示含各部分数量)
-                val parts = buildList {
-                    if (restoreHistoryChecked && result.history != null) {
-                        add(context.getString(R.string.toast_restore_part_history, result.history.added, result.history.skipped))
-                    }
-                    if (restoreBlockRulesChecked && result.blockRules != null) {
-                        add(context.getString(R.string.toast_restore_part_rules, result.blockRules.added, result.blockRules.skipped))
-                    }
-                    if (restorePreferencesChecked && result.preferencesOverwritten != null) {
-                        add(context.getString(R.string.toast_restore_part_prefs, result.preferencesOverwritten))
-                    }
-                }
-                context.toastShort(context.getString(R.string.toast_restore_success, parts.joinToString("，")))
+                context.toastShort(context.getString(
+                    R.string.toast_restore_success,
+                    buildRestoreSummaryParts(
+                        context, result,
+                        restoreHistoryChecked, restoreBlockRulesChecked, restorePreferencesChecked,
+                    ).joinToString("，"),
+                ))
                 if (restoreHistoryChecked) {
                     // 浏览记录恢复后刷新历史列表:mark 双 tab 信号,当前 tab 经全局事件
-                    // 立即刷;两 tab 都不在组合中(本页发起恢复)时各自重组补刷
-                    HistoryListRefreshSignal.mark()
-                    emitGlobalEvent(HistoryListUiEvent.Imported)
+                    // 立即刷;两 tab 都不在组合中(本页发起恢复)时各自重组补刷。
+                    // NonCancellable 内执行:恢复期间离开本页 scope 已取消,
+                    // emitGlobalEvent 的 launch 不再吞掉(与本地备份页/HistoryPage 先例对齐)
+                    withContext(NonCancellable) {
+                        HistoryListRefreshSignal.mark()
+                        emitGlobalEvent(HistoryListUiEvent.Imported)
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -336,7 +340,7 @@ fun BackupSettingsPage(
             TitleCentredToolbar(
                 title = {
                     Text(
-                        text = stringResource(id = R.string.title_backup_settings),
+                        text = stringResource(id = R.string.title_webdav_backup),
                         fontWeight = FontWeight.Bold, style = MaterialTheme.typography.h6
                     )
                 },
@@ -355,7 +359,7 @@ fun BackupSettingsPage(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SectionTitle(text = stringResource(id = R.string.backup_section_config))
-            ConfigCard {
+            ActionCard {
                 ConfigTextField(
                     value = serverUrl,
                     onValueChange = { serverUrl = it },
@@ -427,9 +431,9 @@ fun BackupSettingsPage(
             }
 
             SectionTitle(text = stringResource(id = R.string.backup_section_actions))
-            ConfigCard {
+            ActionCard {
                 Button(
-                    onClick = ::onBackupNow,
+                    onClick = { backupConfirmDialogState.show() },
                     // 四个操作互斥:任一进行中其余全部禁点(防并发写 DataStore/数据库与重复上传)
                     enabled = !testing && !saving && !backingUp && !restoring,
                     modifier = Modifier.fillMaxWidth(),
@@ -486,6 +490,16 @@ fun BackupSettingsPage(
             )
         }
     }
+
+    // 备份确认弹窗(02 号票):确认才上传,取消零上传;标题与本地备份共用同一模板,
+    // 内容为 WebDAV 专属(整体覆盖远端固定文件名,非"仅覆盖软件设置")
+    ConfirmDialog(
+        dialogState = backupConfirmDialogState,
+        onConfirm = ::onBackupNow,
+        title = { Text(text = stringResource(id = R.string.backup_confirm_dialog_title)) },
+    ) {
+        Text(text = stringResource(id = R.string.backup_confirm_dialog_message))
+    }
 }
 
 /** 表单当前值快照(测试连接/保存/备份/恢复四操作共用的校验产物) */
@@ -495,6 +509,9 @@ private data class FormConfig(
     val password: String,
     val remotePath: String,
 )
+
+/** 远程路径预填默认值(02 号票;已保存配置回显优先于预填,尾斜杠沿目录约定) */
+private const val DEFAULT_REMOTE_PATH = "/tblite/"
 
 /**
  * WebDavException 四态 → 用户可读提示(spec:失败按错误类型提示);
@@ -539,23 +556,6 @@ private fun SectionTitle(text: String) {
     )
 }
 
-/** 配置卡片容器:圆角表面,风格对齐项目卡片(ExtendedTheme.colors.card) */
-@Composable
-private fun ConfigCard(content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                color = ExtendedTheme.colors.card,
-                shape = RoundedCornerShape(12.dp),
-            )
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        content()
-    }
-}
-
 @Composable
 private fun ConfigTextField(
     value: String,
@@ -583,37 +583,5 @@ private fun ConfigTextField(
             focusedLabelColor = ExtendedTheme.colors.primary,
         ),
         modifier = modifier.fillMaxWidth(),
-    )
-}
-
-/** 恢复勾选对话框的单行复选 */
-@Composable
-private fun RestoreCheckboxRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .selectable(selected = checked, onClick = { onCheckedChange(!checked) }),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Checkbox(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colors.primary),
-        )
-        Text(text = label, style = MaterialTheme.typography.body1)
-    }
-}
-
-/** 按钮内转圈(进行中反馈:按钮内转圈 + 禁点) */
-@Composable
-private fun ButtonProgressIndicator() {
-    CircularProgressIndicator(
-        color = LocalContentColor.current,
-        strokeWidth = 2.dp,
-        modifier = Modifier.size(18.dp),
     )
 }
